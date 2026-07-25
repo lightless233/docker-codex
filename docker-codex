@@ -1,0 +1,211 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+die() {
+  printf 'docker-codex: %s\n' "$*" >&2
+  exit 1
+}
+
+usage() {
+  cat <<'EOF'
+Usage: docker-codex [options] [--] [codex args...]
+
+Run Codex in Docker against the current Git checkout.
+
+Options:
+  --build                 Build the image before launching
+  --image IMAGE           Image to use (default: docker-codex:local)
+  --isolated NAME         Create branch codex/NAME in a retained worktree
+  --bind PATH[:ro]        Bind an absolute directory at the same container path
+                          (repeatable; append :ro for read-only)
+  --help, -h              Show this help
+
+Arguments after -- are passed to Codex without reinterpretation.
+Isolated worktrees and their branches are retained after the container exits.
+EOF
+}
+
+path_is_within() {
+  local child=$1 parent=$2
+  if [[ $parent == / ]]; then
+    return 0
+  fi
+  [[ $child == "$parent" || $child == "$parent/"* ]]
+}
+
+reject_mount_comma() {
+  [[ $1 != *,* ]] ||
+    die "Docker --mount paths containing commas are unsupported: $1"
+}
+
+append_same_path_mount() {
+  local path=$1 mode=${2:-rw}
+  [[ -e $path ]] || die "bind source does not exist: $path"
+  [[ -d $path ]] || die "bind source must be a directory: $path"
+  path=$(cd "$path" && pwd -P)
+  reject_mount_comma "$path"
+  if [[ $mode == ro ]]; then
+    DOCKER_ARGS+=(--mount "type=bind,source=$path,target=$path,readonly")
+  else
+    DOCKER_ARGS+=(--mount "type=bind,source=$path,target=$path")
+  fi
+}
+
+repo_id_for() {
+  printf '%s' "$1" | git hash-object --stdin | cut -c1-16
+}
+
+validate_isolated_name() {
+  local name=$1
+  [[ $name =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
+    die "invalid isolated worktree name: $name"
+  git check-ref-format --branch "codex/$name" >/dev/null 2>&1 ||
+    die "invalid isolated worktree name: $name"
+}
+
+create_isolated_worktree() {
+  local name=$1 current_branch data_home repo_id target branch
+  validate_isolated_name "$name"
+  current_branch=$(git branch --show-current)
+  [[ -n $current_branch ]] ||
+    die "--isolated requires the current checkout to be on a branch"
+
+  data_home=${DOCKER_CODEX_DATA_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/docker-codex}
+  mkdir -p "$data_home/worktrees"
+  data_home=$(cd "$data_home" && pwd -P)
+  repo_id=$(repo_id_for "$COMMON_DIR")
+  target="$data_home/worktrees/$repo_id/$name"
+  branch="codex/$name"
+
+  [[ ! -e $target ]] ||
+    die "isolated worktree path already exists: $target"
+  if git show-ref --verify --quiet "refs/heads/$branch"; then
+    die "isolated worktree branch already exists: $branch"
+  fi
+
+  mkdir -p "$(dirname "$target")"
+  git worktree add -b "$branch" "$target" HEAD
+  CHECKOUT_ROOT=$(cd "$target" && pwd -P)
+  START_DIR=$CHECKOUT_ROOT
+}
+
+DOCKER_BIN=${DOCKER_CODEX_DOCKER_BIN:-docker}
+IMAGE=${DOCKER_CODEX_IMAGE:-docker-codex:local}
+HOST_OS=${DOCKER_CODEX_HOST_OS:-$(uname -s)}
+BUILD=0
+ISOLATED=
+BIND_SPECS=()
+CODEX_ARGS=()
+
+while (($#)); do
+  case $1 in
+    --build)
+      BUILD=1
+      shift
+      ;;
+    --image)
+      (($# >= 2)) || die "--image requires a value"
+      IMAGE=$2
+      shift 2
+      ;;
+    --isolated)
+      (($# >= 2)) || die "--isolated requires a name"
+      ISOLATED=$2
+      shift 2
+      ;;
+    --bind)
+      (($# >= 2)) || die "--bind requires a path"
+      BIND_SPECS+=("$2")
+      shift 2
+      ;;
+    --)
+      shift
+      CODEX_ARGS=("$@")
+      break
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      die "unknown option: $1"
+      ;;
+  esac
+done
+
+command -v git >/dev/null 2>&1 || die "git is required"
+command -v "$DOCKER_BIN" >/dev/null 2>&1 || die "docker is required"
+
+START_DIR=$(pwd -P)
+CHECKOUT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) ||
+  die "current directory is not inside a Git checkout"
+CHECKOUT_ROOT=$(cd "$CHECKOUT_ROOT" && pwd -P)
+
+CODEX_HOME_SOURCE=${CODEX_HOME:-$HOME/.codex}
+[[ -d $CODEX_HOME_SOURCE ]] ||
+  die "Codex home does not exist: $CODEX_HOME_SOURCE"
+CODEX_HOME_SOURCE=$(cd "$CODEX_HOME_SOURCE" && pwd -P)
+
+COMMON_DIR=$(git rev-parse --path-format=absolute --git-common-dir)
+COMMON_DIR=$(cd "$COMMON_DIR" && pwd -P)
+GIT_DIR=$(git rev-parse --path-format=absolute --git-dir)
+GIT_DIR=$(cd "$GIT_DIR" && pwd -P)
+
+if [[ -n $ISOLATED ]]; then
+  create_isolated_worktree "$ISOLATED"
+  COMMON_DIR=$(git -C "$CHECKOUT_ROOT" rev-parse --path-format=absolute --git-common-dir)
+  COMMON_DIR=$(cd "$COMMON_DIR" && pwd -P)
+  GIT_DIR=$(git -C "$CHECKOUT_ROOT" rev-parse --path-format=absolute --git-dir)
+  GIT_DIR=$(cd "$GIT_DIR" && pwd -P)
+fi
+REPO_ID=$(repo_id_for "$COMMON_DIR")
+
+DOCKER_ARGS=(run --rm)
+if [[ -t 0 && -t 1 ]]; then
+  DOCKER_ARGS+=(-it)
+fi
+DOCKER_ARGS+=(--env "CODEX_HOME=/codex-home")
+DOCKER_ARGS+=(--env "HOST_UID=$(id -u)" --env "HOST_GID=$(id -g)")
+append_same_path_mount "$CHECKOUT_ROOT"
+reject_mount_comma "$CODEX_HOME_SOURCE"
+DOCKER_ARGS+=(--mount "type=bind,source=$CODEX_HOME_SOURCE,target=/codex-home")
+DOCKER_ARGS+=(--mount "type=volume,source=docker-codex-cache-$REPO_ID,target=/codex-cache")
+
+if ! path_is_within "$COMMON_DIR" "$CHECKOUT_ROOT"; then
+  append_same_path_mount "$COMMON_DIR"
+fi
+if ! path_is_within "$GIT_DIR" "$CHECKOUT_ROOT" &&
+  ! path_is_within "$GIT_DIR" "$COMMON_DIR"; then
+  append_same_path_mount "$GIT_DIR"
+fi
+for bind_spec in "${BIND_SPECS[@]}"; do
+  bind_mode=rw
+  bind_path=$bind_spec
+  if [[ $bind_spec == *:ro ]]; then
+    bind_mode=ro
+    bind_path=${bind_spec%:ro}
+  fi
+  [[ $bind_path == /* ]] ||
+    die "--bind requires an absolute path: $bind_path"
+  append_same_path_mount "$bind_path" "$bind_mode"
+done
+
+DOCKER_ARGS+=(--workdir "$START_DIR")
+if [[ $HOST_OS == Linux ]]; then
+  DOCKER_ARGS+=(--add-host "host.docker.internal:host-gateway")
+elif [[ $HOST_OS != Darwin ]]; then
+  die "unsupported host OS: $HOST_OS"
+fi
+
+"$DOCKER_BIN" info >/dev/null 2>&1 ||
+  die "Docker daemon is unavailable"
+
+if ((BUILD)); then
+  SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+  "$DOCKER_BIN" build --tag "$IMAGE" "$SCRIPT_DIR"
+else
+  "$DOCKER_BIN" image inspect "$IMAGE" >/dev/null 2>&1 ||
+    die "image not found: $IMAGE (run with --build)"
+fi
+
+exec "$DOCKER_BIN" "${DOCKER_ARGS[@]}" "$IMAGE" codex --yolo "${CODEX_ARGS[@]}"
