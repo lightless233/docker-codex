@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+HOST_UID=${HOST_UID:?HOST_UID is required}
+HOST_GID=${HOST_GID:?HOST_GID is required}
+RUNTIME_HOME=/home/codex
+
+if ! getent group "$HOST_GID" >/dev/null; then
+  groupadd --gid "$HOST_GID" docker-codex
+fi
+if passwd_entry=$(getent passwd "$HOST_UID"); then
+  RUNTIME_USER=${passwd_entry%%:*}
+  if [[ $HOST_UID != 0 ]]; then
+    usermod --home "$RUNTIME_HOME" --append --groups sudo "$RUNTIME_USER"
+  fi
+else
+  useradd --uid "$HOST_UID" --gid "$HOST_GID" --groups sudo \
+    --home-dir "$RUNTIME_HOME" --no-create-home --shell /bin/bash docker-codex
+  RUNTIME_USER=docker-codex
+fi
+
+mkdir -p "$RUNTIME_HOME" /codex-cache
+chown "$HOST_UID:$HOST_GID" "$RUNTIME_HOME" /codex-cache
+
+export HOME=$RUNTIME_HOME
+export USER=$RUNTIME_USER
+export LOGNAME=$RUNTIME_USER
+export CODEX_HOME=${CODEX_HOME:-/codex-home}
+export CARGO_HOME=/codex-cache/cargo-home
+export CARGO_TARGET_DIR=/codex-cache/cargo-target
+export XDG_CACHE_HOME=/codex-cache/xdg
+export XDG_DATA_HOME=/codex-cache/xdg-data
+export NPM_CONFIG_CACHE=/codex-cache/npm
+export npm_config_store_dir=/codex-cache/pnpm-store
+export PNPM_HOME=/codex-cache/pnpm
+export PATH="$PNPM_HOME:$PATH"
+
+if [[ ${1:-} == codex ]]; then
+  if ! gosu "$HOST_UID:$HOST_GID" codex login status >/dev/null 2>&1; then
+    printf '%s\n' \
+      'docker-codex: warning: container cannot use the current Codex login; file auth can be shared, host keyrings cannot.' >&2
+  fi
+fi
+
+exec gosu "$HOST_UID:$HOST_GID" "$@"
