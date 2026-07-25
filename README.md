@@ -23,16 +23,25 @@ cd /absolute/path/to/docker-codex
 构建完成后应输出当前镜像内的 Codex CLI 版本。后续启动会直接复用本地
 `docker-codex:local`，不需要重复构建。
 
-### 2. 让命令在当前终端中随处可用
+### 2. 安装启动器
 
-把本仓库目录加入当前 shell 的 `PATH`：
+不要把整个仓库加入 `PATH`。构建完成后，只把启动脚本安装到
+`/usr/local/bin`：
 
 ```bash
-export PATH="/absolute/path/to/docker-codex:$PATH"
+sudo install -m 0755 ./docker-codex /usr/local/bin/docker-codex
 ```
 
-如果需要永久生效，请把同一行加入 `~/.bashrc` 或 `~/.zshrc`，然后重新打开
-终端。
+如果不希望使用 `sudo`，也可以安装到用户目录：
+
+```bash
+install -d "$HOME/.local/bin"
+install -m 0755 ./docker-codex "$HOME/.local/bin/docker-codex"
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+仅当 `~/.local/bin` 尚未在 `PATH` 中时，才需要把最后一行加入
+`~/.bashrc` 或 `~/.zshrc`。
 
 ### 3. 启动 Codex
 
@@ -89,11 +98,22 @@ linux-x64 或 linux-arm64 压缩包安装，并使用该版本发布目录中的
 ./docker-codex --build -- --version
 ```
 
+然后安装单文件启动器：
+
+```bash
+sudo install -m 0755 ./docker-codex /usr/local/bin/docker-codex
+```
+
+复制后的启动器可以在没有源码仓库的情况下正常启动已有镜像。`--build`
+仍然需要仓库中的 `Dockerfile` 和 `container-entrypoint`，因此重新构建镜像
+时应回到源码仓库运行 `./docker-codex --build`；更新启动器后再次执行上面的
+`install` 命令。
+
 后续启动会复用 `docker-codex:local`：
 
 ```bash
 cd /path/to/project
-/path/to/docker-codex/docker-codex
+docker-codex
 ```
 
 启动器会在 `codex` 后自动加入 `--yolo --disable apps`。Apps/连接器只在
@@ -101,7 +121,7 @@ cd /path/to/project
 会原样传给 Codex：
 
 ```bash
-/path/to/docker-codex/docker-codex -- review "review the current branch"
+docker-codex -- review "review the current branch"
 ```
 
 ## Checkout 与 worktree
@@ -118,7 +138,7 @@ worktree 或 submodule，并且 Git metadata 位于其他目录，启动器会�
 
 ```bash
 cd /home/me/program/my-long-lived-worktree
-/path/to/docker-codex/docker-codex
+docker-codex
 ```
 
 容器对 Git common directory 拥有写权限，因为暂存和提交操作需要更新
@@ -130,7 +150,7 @@ worktree。
 需要新建隔离 worktree 时，显式指定：
 
 ```bash
-/path/to/docker-codex/docker-codex --isolated issue-123
+docker-codex --isolated issue-123
 ```
 
 该命令会创建：

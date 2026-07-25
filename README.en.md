@@ -25,16 +25,25 @@ The command should print the Codex CLI version installed in the image. Later
 launches reuse the local `docker-codex:local` image and do not need to rebuild
 it.
 
-### 2. Make the command available in the current terminal
+### 2. Install the launcher
 
-Add this repository directory to the current shell's `PATH`:
+Do not add the whole repository to `PATH`. After building the image, install
+only the launcher into `/usr/local/bin`:
 
 ```bash
-export PATH="/absolute/path/to/docker-codex:$PATH"
+sudo install -m 0755 ./docker-codex /usr/local/bin/docker-codex
 ```
 
-To make this permanent, add the same line to `~/.bashrc` or `~/.zshrc`, then
-open a new terminal.
+For an installation that does not require `sudo`, use a user-local directory:
+
+```bash
+install -d "$HOME/.local/bin"
+install -m 0755 ./docker-codex "$HOME/.local/bin/docker-codex"
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Add the last line to `~/.bashrc` or `~/.zshrc` only when `~/.local/bin` is not
+already in `PATH`.
 
 ### 3. Start Codex
 
@@ -92,11 +101,23 @@ Build the local image from this repository:
 ./docker-codex --build -- --version
 ```
 
+Then install the single-file launcher:
+
+```bash
+sudo install -m 0755 ./docker-codex /usr/local/bin/docker-codex
+```
+
+The installed launcher can start an existing image without the source
+checkout. `--build` still needs the repository's `Dockerfile` and
+`container-entrypoint`, so rebuild from the source checkout with
+`./docker-codex --build`; run the `install` command again after updating the
+launcher.
+
 Subsequent launches reuse `docker-codex:local`:
 
 ```bash
 cd /path/to/project
-/path/to/docker-codex/docker-codex
+docker-codex
 ```
 
 The launcher adds `--yolo --disable apps` immediately after `codex`. Apps and
@@ -105,7 +126,7 @@ Codex configuration is not modified. Arguments after `--` then go directly to
 Codex:
 
 ```bash
-/path/to/docker-codex/docker-codex -- review "review the current branch"
+docker-codex -- review "review the current branch"
 ```
 
 ## Checkout and worktree behavior
@@ -122,7 +143,7 @@ For example, a long-lived linked worktree can be used directly:
 
 ```bash
 cd /home/me/program/my-long-lived-worktree
-/path/to/docker-codex/docker-codex
+docker-codex
 ```
 
 The container receives write access to the Git common directory because staging
@@ -134,7 +155,7 @@ trees unless they are separately mounted.
 Create a new host worktree explicitly:
 
 ```bash
-/path/to/docker-codex/docker-codex --isolated issue-123
+docker-codex --isolated issue-123
 ```
 
 This creates:

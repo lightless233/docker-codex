@@ -31,6 +31,55 @@ test_normal_checkout_preserves_paths_and_codex_arguments() {
   assert_no_line "<type=bind,source=$repo/.git,target=$repo/.git>" "$TEST_DOCKER_LOG"
 }
 
+test_installed_launcher_runs_without_source_checkout() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  local installed="$TEST_TMP/bin/docker-codex"
+  make_repo "$repo"
+  mkdir -p "$(dirname "$installed")"
+  install -m 0755 "$ROOT/docker-codex" "$installed"
+  prepare_fake_runtime "$TEST_TMP"
+
+  (
+    cd "$repo"
+    CODEX_HOME="$TEST_CODEX_HOME" \
+      DOCKER_CODEX_DOCKER_BIN="$TEST_DOCKER" \
+      DOCKER_CODEX_TEST_DOCKER_LOG="$TEST_DOCKER_LOG" \
+      "$installed" -- status
+  )
+
+  [[ ! -e "$(dirname "$installed")/Dockerfile" ]] ||
+    fail "installed launcher unexpectedly has source files beside it"
+  assert_line "<codex>" "$TEST_DOCKER_LOG"
+  assert_line "<status>" "$TEST_DOCKER_LOG"
+}
+
+test_installed_launcher_rejects_build_without_source_checkout() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  local installed="$TEST_TMP/bin/docker-codex"
+  local errors="$TEST_TMP/errors"
+  make_repo "$repo"
+  mkdir -p "$(dirname "$installed")"
+  install -m 0755 "$ROOT/docker-codex" "$installed"
+  prepare_fake_runtime "$TEST_TMP"
+
+  if (
+    cd "$repo"
+    CODEX_HOME="$TEST_CODEX_HOME" \
+      DOCKER_CODEX_DOCKER_BIN="$TEST_DOCKER" \
+      DOCKER_CODEX_TEST_DOCKER_LOG="$TEST_DOCKER_LOG" \
+      "$installed" --build -- --version
+  ) >"$errors" 2>&1; then
+    fail "installed launcher unexpectedly built without source files"
+  fi
+
+  assert_contains "--build requires the docker-codex source checkout" "$errors"
+  assert_no_line "<build>" "$TEST_DOCKER_LOG"
+}
+
 test_linked_worktree_mounts_external_git_metadata_and_readonly_bind() {
   local TEST_TMP
   TEST_TMP=$(new_tmp)
@@ -198,6 +247,8 @@ test_help_documents_public_interface_and_retained_worktrees() {
 
 init_tests
 test_normal_checkout_preserves_paths_and_codex_arguments
+test_installed_launcher_runs_without_source_checkout
+test_installed_launcher_rejects_build_without_source_checkout
 test_linked_worktree_mounts_external_git_metadata_and_readonly_bind
 test_submodule_mounts_external_git_metadata
 test_darwin_does_not_add_linux_host_gateway
