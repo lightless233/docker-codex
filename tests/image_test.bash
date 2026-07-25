@@ -39,7 +39,32 @@ test_runtime_user_has_passwordless_sudo_without_root_group() {
     '
 }
 
+test_login_shell_keeps_toolchain_on_path() {
+  # shellcheck disable=SC2016 # Variables expand inside the container.
+  "$DOCKER_BIN" run --rm \
+    --env HOST_UID=12345 \
+    --env HOST_GID=23456 \
+    "$IMAGE" \
+    bash -lc '
+      set -euo pipefail
+      [[ :$PATH: == *:/usr/local/cargo/bin:* ]]
+      [[ :$PATH: == *:/codex-cache/pnpm:* ]]
+      command -v cargo rustc rustfmt cargo-clippy pnpm >/dev/null
+    '
+}
+
+test_python_and_archive_tools_are_available() {
+  # shellcheck disable=SC2016 # Variables expand inside the container.
+  "$DOCKER_BIN" run --rm --entrypoint bash "$IMAGE" -c '
+    set -euo pipefail
+    command -v python3 python pip3 unzip zip >/dev/null
+    python3 -m venv --help >/dev/null
+  '
+}
+
 init_tests
 test_debian_and_official_node_runtime
 test_runtime_user_has_passwordless_sudo_without_root_group
+test_login_shell_keeps_toolchain_on_path
+test_python_and_archive_tools_are_available
 printf 'image tests: PASS\n'

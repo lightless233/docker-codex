@@ -84,9 +84,10 @@ Supported hosts:
 
 The image uses Debian 13 slim and installs Node.js 24.18.0 LTS from the
 official nodejs.org linux-x64/linux-arm64 archive after checking it against
-the release's `SHASUMS256.txt`. It also contains pnpm, Rust stable, Codex CLI,
-Git, common native build dependencies, and shell utilities useful during
-agentic development.
+the release's `SHASUMS256.txt`. It also contains pnpm, Rust stable (with
+rustfmt and clippy), Codex CLI, Git, Python 3 (pip and venv), common native
+build dependencies, and shell utilities useful during agentic development.
+An `/etc/profile.d` entry keeps Cargo and pnpm on PATH for login shells.
 
 ## Prerequisites
 

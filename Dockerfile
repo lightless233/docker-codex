@@ -23,11 +23,17 @@ RUN apt-get update \
         libssl-dev \
         openssh-client \
         pkg-config \
+        python-is-python3 \
+        python3 \
+        python3-pip \
+        python3-venv \
         ripgrep \
         shellcheck \
         sqlite3 \
         sudo \
+        unzip \
         xz-utils \
+        zip \
         zsh \
     && rm -rf /var/lib/apt/lists/*
 
@@ -35,6 +41,12 @@ RUN printf '%s\n' '%sudo ALL=(ALL:ALL) NOPASSWD: ALL' \
       > /etc/sudoers.d/docker-codex \
     && chmod 0440 /etc/sudoers.d/docker-codex \
     && visudo -cf /etc/sudoers.d/docker-codex
+
+# Debian's /etc/profile resets PATH for login shells; re-add the toolchain
+# directories so agent commands running through `bash -lc` still find them.
+RUN printf '%s\n' \
+      'export PATH="/codex-cache/pnpm:/usr/local/cargo/bin:$PATH"' \
+      > /etc/profile.d/docker-codex-path.sh
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -64,6 +76,7 @@ RUN set -eux; \
 RUN curl --proto '=https' --tlsv1.2 --silent --show-error --fail \
         https://sh.rustup.rs \
         | sh -s -- -y --profile minimal --default-toolchain stable \
+    && rustup component add rustfmt clippy \
     && rustc --version \
     && cargo --version
 
