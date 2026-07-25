@@ -61,6 +61,10 @@ docker-codex --bind /absolute/path/to/fixtures:ro --
 > metadata 和宿主 Codex home。请只在你信任的项目和 Docker 隔离环境中
 > 使用。
 
+启动器还会为本次容器进程传入 `--disable apps`，默认关闭 Apps/连接器，
+避免内置 `codex_apps` MCP 的启动问题影响本地开发。它不会修改宿主机共享的
+`config.toml`。
+
 支持的宿主平台：
 
 - Linux
@@ -92,8 +96,9 @@ cd /path/to/project
 /path/to/docker-codex/docker-codex
 ```
 
-启动器会在 `codex` 后自动加入 `--yolo`。`--` 后面的参数会原样传给
-Codex：
+启动器会在 `codex` 后自动加入 `--yolo --disable apps`。Apps/连接器只在
+当前容器进程中关闭，宿主机共享的 Codex 配置不会被修改。`--` 后面的参数
+会原样传给 Codex：
 
 ```bash
 /path/to/docker-codex/docker-codex -- review "review the current branch"

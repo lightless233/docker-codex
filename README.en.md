@@ -63,6 +63,10 @@ docker-codex --bind /absolute/path/to/fixtures:ro --
 > required Git metadata, and the host Codex home read-write. Use it only with
 > projects you trust and inside the intended Docker isolation boundary.
 
+The launcher also passes `--disable apps` to this container process by default,
+preventing built-in `codex_apps` MCP startup problems from delaying local
+development. It does not modify the shared host `config.toml`.
+
 Supported hosts:
 
 - Linux
@@ -95,8 +99,10 @@ cd /path/to/project
 /path/to/docker-codex/docker-codex
 ```
 
-The launcher adds `--yolo` immediately after `codex`. Arguments after `--` then
-go directly to Codex:
+The launcher adds `--yolo --disable apps` immediately after `codex`. Apps and
+connectors are disabled only for the current container process; the shared host
+Codex configuration is not modified. Arguments after `--` then go directly to
+Codex:
 
 ```bash
 /path/to/docker-codex/docker-codex -- review "review the current branch"

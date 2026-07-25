@@ -208,4 +208,5 @@ else
     die "image not found: $IMAGE (run with --build)"
 fi
 
-exec "$DOCKER_BIN" "${DOCKER_ARGS[@]}" "$IMAGE" codex --yolo "${CODEX_ARGS[@]}"
+exec "$DOCKER_BIN" "${DOCKER_ARGS[@]}" "$IMAGE" \
+  codex --yolo --disable apps "${CODEX_ARGS[@]}"

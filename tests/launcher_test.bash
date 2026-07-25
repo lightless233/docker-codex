@@ -24,6 +24,8 @@ test_normal_checkout_preserves_paths_and_codex_arguments() {
   assert_ordered_lines "$TEST_DOCKER_LOG" \
     "<codex>" \
     "<--yolo>" \
+    "<--disable>" \
+    "<apps>" \
     "<review>" \
     "<prompt with spaces>"
   assert_no_line "<type=bind,source=$repo/.git,target=$repo/.git>" "$TEST_DOCKER_LOG"
