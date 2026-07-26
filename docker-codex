@@ -18,6 +18,13 @@ Options:
   --isolated NAME         Create branch codex/NAME in a retained worktree
   --bind PATH[:ro]        Bind an absolute directory at the same container path
                           (repeatable; append :ro for read-only)
+  --pat TOKEN             Provide a git access token directly; stored under the
+                          data home with mode 600 and mounted read-only at
+                          /codex-credentials/pat (visible in shell history;
+                          prefer --pat-path)
+  --pat-path FILE         Mount a token file read-only at
+                          /codex-credentials/pat (DOCKER_CODEX_PAT_PATH sets
+                          the default)
   --help, -h              Show this help
 
 Arguments after -- are passed to Codex without reinterpretation.
@@ -53,6 +60,28 @@ append_same_path_mount() {
 
 repo_id_for() {
   printf '%s' "$1" | git hash-object --stdin | cut -c1-16
+}
+
+parse_origin_host() {
+  local url=$1
+  case $url in
+    git@*:*)
+      url=${url#git@}
+      printf '%s\n' "${url%%:*}"
+      ;;
+    ssh://*)
+      url=${url#ssh://}
+      url=${url#*@}
+      printf '%s\n' "${url%%/*}"
+      ;;
+    http://*|https://*)
+      url=${url#*://}
+      printf '%s\n' "${url%%/*}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 validate_isolated_name() {
@@ -95,6 +124,8 @@ HOST_OS=${DOCKER_CODEX_HOST_OS:-$(uname -s)}
 BUILD=0
 ISOLATED=
 BIND_SPECS=()
+PAT_VALUE=
+PAT_PATH=${DOCKER_CODEX_PAT_PATH:-}
 CODEX_ARGS=()
 
 while (($#)); do
@@ -118,6 +149,16 @@ while (($#)); do
       BIND_SPECS+=("$2")
       shift 2
       ;;
+    --pat)
+      (($# >= 2)) || die "--pat requires a value"
+      PAT_VALUE=$2
+      shift 2
+      ;;
+    --pat-path)
+      (($# >= 2)) || die "--pat-path requires a file"
+      PAT_PATH=$2
+      shift 2
+      ;;
     --)
       shift
       CODEX_ARGS=("$@")
@@ -135,6 +176,10 @@ done
 
 command -v git >/dev/null 2>&1 || die "git is required"
 command -v "$DOCKER_BIN" >/dev/null 2>&1 || die "docker is required"
+
+if [[ -n $PAT_VALUE && -n $PAT_PATH ]]; then
+  die "--pat and --pat-path are mutually exclusive"
+fi
 
 START_DIR=$(pwd -P)
 CHECKOUT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) ||
@@ -170,6 +215,41 @@ append_same_path_mount "$CHECKOUT_ROOT"
 reject_mount_comma "$CODEX_HOME_SOURCE"
 DOCKER_ARGS+=(--mount "type=bind,source=$CODEX_HOME_SOURCE,target=/codex-home")
 DOCKER_ARGS+=(--mount "type=volume,source=docker-codex-cache-$REPO_ID,target=/codex-cache")
+
+if [[ -n $PAT_VALUE ]]; then
+  pat_data_home=${DOCKER_CODEX_DATA_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/docker-codex}
+  install -d -m 700 "$pat_data_home/pat"
+  PAT_PATH=$pat_data_home/pat/$REPO_ID
+  (umask 077; printf '%s\n' "$PAT_VALUE" >"$PAT_PATH")
+  chmod 600 "$PAT_PATH"
+fi
+if [[ -n $PAT_PATH ]]; then
+  [[ -e $PAT_PATH ]] || die "PAT file does not exist: $PAT_PATH"
+  [[ -f $PAT_PATH ]] || die "PAT path must be a regular file: $PAT_PATH"
+  PAT_PATH=$(cd "$(dirname "$PAT_PATH")" && pwd -P)/$(basename "$PAT_PATH")
+  reject_mount_comma "$PAT_PATH"
+  DOCKER_ARGS+=(--mount "type=bind,source=$PAT_PATH,target=/codex-credentials/pat,readonly")
+  # Git reads GIT_CONFIG_KEY_n/VALUE_n as extra config entries, so the
+  # container gets a credential helper and an SSH-to-HTTPS rewrite for the
+  # origin host without touching any config file shared with the host.
+  # shellcheck disable=SC2016 # $(cat ...) must stay literal; git runs the helper.
+  pat_helper='!f() { echo username=x-access-token; echo "password=$(cat /codex-credentials/pat)"; }; f'
+  origin_url=$(git remote get-url origin 2>/dev/null || true)
+  origin_host=$(parse_origin_host "$origin_url" 2>/dev/null || true)
+  if [[ -n $origin_host ]]; then
+    DOCKER_ARGS+=(--env "GIT_CONFIG_COUNT=3")
+    DOCKER_ARGS+=(--env "GIT_CONFIG_KEY_0=credential.https://$origin_host.helper")
+    DOCKER_ARGS+=(--env "GIT_CONFIG_VALUE_0=$pat_helper")
+    DOCKER_ARGS+=(--env "GIT_CONFIG_KEY_1=url.https://$origin_host/.insteadOf")
+    DOCKER_ARGS+=(--env "GIT_CONFIG_VALUE_1=git@$origin_host:")
+    DOCKER_ARGS+=(--env "GIT_CONFIG_KEY_2=url.https://$origin_host/.insteadOf")
+    DOCKER_ARGS+=(--env "GIT_CONFIG_VALUE_2=ssh://git@$origin_host/")
+  else
+    DOCKER_ARGS+=(--env "GIT_CONFIG_COUNT=1")
+    DOCKER_ARGS+=(--env "GIT_CONFIG_KEY_0=credential.helper")
+    DOCKER_ARGS+=(--env "GIT_CONFIG_VALUE_0=$pat_helper")
+  fi
+fi
 
 if ! path_is_within "$COMMON_DIR" "$CHECKOUT_ROOT"; then
   append_same_path_mount "$COMMON_DIR"

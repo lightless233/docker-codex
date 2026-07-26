@@ -227,6 +227,36 @@ Codex 进程相同。升级状态格式时，建议让镜像内 Codex CLI 与宿
 配置中的 STDIO MCP 命令和本地工具也必须已经安装在镜像中，或者显式挂载到
 容器内。
 
+## 向容器提供 Git 推送凭证
+
+容器默认没有任何 Git 凭证，推送会失败。启动器提供两种显式 opt-in
+方式，把 token 以只读文件挂载到容器内固定路径
+`/codex-credentials/pat`，并通过 `GIT_CONFIG_*` 环境变量注入通用的
+credential helper 和 origin host 的 SSH→HTTPS `insteadOf` 重写。这些
+配置只存在于容器进程的环境中，不会写入任何与宿主共享的配置文件。
+
+推荐把 token 保存在 checkout 之外的专用文件中：
+
+```bash
+install -d -m 700 ~/.local/share/docker-codex/pat
+$EDITOR ~/.local/share/docker-codex/pat/github-<repo>   # 只写 token 一行
+chmod 600 ~/.local/share/docker-codex/pat/github-<repo>
+
+docker-codex --pat-path ~/.local/share/docker-codex/pat/github-<repo>
+```
+
+可以用 `DOCKER_CODEX_PAT_PATH` 设置默认路径，避免每次输入。
+
+`--pat TOKEN` 直接在命令行传入 token：启动器会把它写入 data home 下的
+`pat/<repo-id>`（目录 700、文件 600），再走相同的挂载逻辑。注意 token
+值会留在 shell 历史和进程列表里，**这只是无法准备 token 文件时的兜底
+方案，优先使用 `--pat-path`**；确实需要用 `--pat` 时，请确认 token 按
+最小权限签发、可随时撤销且有效期短。
+
+凭证进入容器后，agent 可以读取它。请只使用限定单个仓库、权限最小、
+带过期时间的 token（如 GitHub fine-grained PAT），不再需要时在服务端
+撤销即可。
+
 ## 构建缓存
 
 每个 Git common directory 都会获得一个稳定的 Docker volume，名称类似：
@@ -321,6 +351,15 @@ Docker 隔离。
 
 --bind PATH[:ro]
     将绝对目录挂载到容器内相同路径；可以重复指定。
+
+--pat TOKEN
+    直接提供 Git 访问 token；存储在 data home（600 权限）并以只读
+    挂载到 /codex-credentials/pat。token 会出现在 shell 历史中，
+    建议优先使用 --pat-path。
+
+--pat-path FILE
+    将 token 文件只读挂载到 /codex-credentials/pat；
+    DOCKER_CODEX_PAT_PATH 可设置默认值。
 
 --help, -h
     输出帮助。

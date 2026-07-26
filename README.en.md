@@ -222,6 +222,42 @@ Configuration that names other absolute host paths still needs a corresponding
 `--bind`. STDIO MCP commands and native tools referenced by `config.toml` must
 also be installed in the image or made visible explicitly.
 
+## Providing Git push credentials
+
+The container starts with no Git credentials, so pushes fail. Two explicit
+opt-in options mount a token as a read-only file at the fixed container path
+`/codex-credentials/pat`. The launcher also injects a generic credential
+helper and an SSH-to-HTTPS `insteadOf` rewrite for the origin host through
+`GIT_CONFIG_*` environment variables. These settings live only in the
+container process environment; nothing is written to config files shared
+with the host.
+
+The recommended form keeps the token in a dedicated file outside the
+checkout:
+
+```bash
+install -d -m 700 ~/.local/share/docker-codex/pat
+$EDITOR ~/.local/share/docker-codex/pat/github-<repo>   # the token, one line
+chmod 600 ~/.local/share/docker-codex/pat/github-<repo>
+
+docker-codex --pat-path ~/.local/share/docker-codex/pat/github-<repo>
+```
+
+Set `DOCKER_CODEX_PAT_PATH` to make that path the default and skip typing it.
+
+`--pat TOKEN` passes the token on the command line instead: the launcher
+writes it to `pat/<repo-id>` under the data home (directory mode 700, file
+mode 600) and follows the same mounting path. The token value ends up in
+your shell history and process listings, so **this is only a fallback for
+situations where a token file cannot be prepared; prefer `--pat-path`**.
+If you do use `--pat`, make sure the token is minimally scoped, revocable,
+and short-lived.
+
+Once inside the container, the token is readable by the agent. Use tokens
+scoped to a single repository with minimal permissions and an expiration
+date (for example GitHub fine-grained PATs), and revoke them server-side
+when they are no longer needed.
+
 ## Build caches
 
 Each Git common directory gets a stable Docker volume named like:
@@ -310,6 +346,15 @@ container. Docker remains the outer boundary for everything else.
 
 --bind PATH[:ro]
     Mount an absolute directory at the same path; repeat as needed.
+
+--pat TOKEN
+    Provide a Git access token directly; stored under the data home with
+    mode 600 and mounted read-only at /codex-credentials/pat. The token
+    appears in shell history; prefer --pat-path.
+
+--pat-path FILE
+    Mount a token file read-only at /codex-credentials/pat.
+    DOCKER_CODEX_PAT_PATH sets the default.
 
 --help, -h
     Print command help.

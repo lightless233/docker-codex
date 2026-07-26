@@ -229,6 +229,90 @@ test_isolated_mode_rejects_detached_head() {
   assert_contains "requires the current checkout to be on a branch" "$errors"
 }
 
+test_pat_path_mounts_file_and_injects_git_credential_config() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  local pat_file="$TEST_TMP/pat dir/github-arbor"
+  make_repo "$repo"
+  git -C "$repo" remote add origin git@github.com:CashFlowStudio/arbor.git
+  mkdir -p "$(dirname "$pat_file")"
+  printf 'token-123\n' >"$pat_file"
+  prepare_fake_runtime "$TEST_TMP"
+
+  run_launcher "$repo" "$ROOT" --pat-path "$pat_file" -- status
+
+  assert_line "<type=bind,source=$pat_file,target=/codex-credentials/pat,readonly>" "$TEST_DOCKER_LOG"
+  assert_line "<GIT_CONFIG_COUNT=3>" "$TEST_DOCKER_LOG"
+  assert_line "<GIT_CONFIG_KEY_0=credential.https://github.com.helper>" "$TEST_DOCKER_LOG"
+  assert_contains "password=\$(cat /codex-credentials/pat)" "$TEST_DOCKER_LOG"
+  assert_line "<GIT_CONFIG_KEY_1=url.https://github.com/.insteadOf>" "$TEST_DOCKER_LOG"
+  assert_line "<GIT_CONFIG_VALUE_1=git@github.com:>" "$TEST_DOCKER_LOG"
+  assert_line "<GIT_CONFIG_KEY_2=url.https://github.com/.insteadOf>" "$TEST_DOCKER_LOG"
+  assert_line "<GIT_CONFIG_VALUE_2=ssh://git@github.com/>" "$TEST_DOCKER_LOG"
+  assert_no_line "<token-123>" "$TEST_DOCKER_LOG"
+}
+
+test_pat_value_is_stored_under_data_home_and_never_passed_as_argument() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  local data_home="$TEST_TMP/data home"
+  local common_dir repo_id stored perms
+  make_repo "$repo"
+  common_dir=$(cd "$repo/.git" && pwd -P)
+  repo_id=$(printf '%s' "$common_dir" | git hash-object --stdin | cut -c1-16)
+  prepare_fake_runtime "$TEST_TMP"
+
+  DOCKER_CODEX_DATA_HOME=$data_home \
+    run_launcher "$repo" "$ROOT" --pat token-xyz -- status
+
+  stored="$data_home/pat/$repo_id"
+  [[ -f $stored ]] || fail "--pat token was not stored at $stored"
+  [[ $(cat "$stored") == token-xyz ]] ||
+    fail "stored --pat token has unexpected content: $(cat "$stored")"
+  perms=$(stat -c %a "$stored")
+  [[ $perms == 600 ]] ||
+    fail "stored --pat token has mode $perms instead of 600"
+  assert_line "<type=bind,source=$stored,target=/codex-credentials/pat,readonly>" "$TEST_DOCKER_LOG"
+  assert_no_line "<token-xyz>" "$TEST_DOCKER_LOG"
+  assert_no_line "<--pat>" "$TEST_DOCKER_LOG"
+  assert_line "<GIT_CONFIG_COUNT=1>" "$TEST_DOCKER_LOG"
+  assert_line "<GIT_CONFIG_KEY_0=credential.helper>" "$TEST_DOCKER_LOG"
+}
+
+test_pat_options_reject_invalid_input() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  local pat_file="$TEST_TMP/pat/token"
+  local errors="$TEST_TMP/errors"
+  make_repo "$repo"
+  mkdir -p "$(dirname "$pat_file")"
+  printf 'token-123\n' >"$pat_file"
+  prepare_fake_runtime "$TEST_TMP"
+
+  if run_launcher "$repo" "$ROOT" --pat-path "$TEST_TMP/missing" -- >"$errors" 2>&1; then
+    fail "missing PAT file unexpectedly succeeded"
+  fi
+  assert_contains "PAT file does not exist" "$errors"
+  assert_no_line "<run>" "$TEST_DOCKER_LOG"
+
+  : >"$TEST_DOCKER_LOG"
+  if run_launcher "$repo" "$ROOT" --pat-path "$(dirname "$pat_file")" -- >"$errors" 2>&1; then
+    fail "directory PAT path unexpectedly succeeded"
+  fi
+  assert_contains "PAT path must be a regular file" "$errors"
+  assert_no_line "<run>" "$TEST_DOCKER_LOG"
+
+  : >"$TEST_DOCKER_LOG"
+  if run_launcher "$repo" "$ROOT" --pat token-xyz --pat-path "$pat_file" -- >"$errors" 2>&1; then
+    fail "combined --pat and --pat-path unexpectedly succeeded"
+  fi
+  assert_contains "mutually exclusive" "$errors"
+  assert_no_line "<run>" "$TEST_DOCKER_LOG"
+}
+
 test_help_documents_public_interface_and_retained_worktrees() {
   local TEST_TMP
   TEST_TMP=$(new_tmp)
@@ -240,6 +324,8 @@ test_help_documents_public_interface_and_retained_worktrees() {
   assert_contains "--image IMAGE" "$output"
   assert_contains "--isolated NAME" "$output"
   assert_contains "--bind PATH[:ro]" "$output"
+  assert_contains "--pat TOKEN" "$output"
+  assert_contains "--pat-path FILE" "$output"
   assert_contains "--help" "$output"
   assert_contains "docker-codex:local" "$output"
   assert_contains "retained" "$output"
@@ -256,5 +342,8 @@ test_bad_bind_paths_fail_before_docker_run
 test_isolated_mode_creates_and_preserves_worktree
 test_isolated_mode_rejects_unsafe_names
 test_isolated_mode_rejects_detached_head
+test_pat_path_mounts_file_and_injects_git_credential_config
+test_pat_value_is_stored_under_data_home_and_never_passed_as_argument
+test_pat_options_reject_invalid_input
 test_help_documents_public_interface_and_retained_worktrees
 printf 'launcher tests: PASS\n'
