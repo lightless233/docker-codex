@@ -264,6 +264,15 @@ docker-codex --pat-path ~/.local/share/docker-codex/pat/github-<repo>
 带过期时间的 token（如 GitHub fine-grained PAT），不再需要时在服务端
 撤销即可。
 
+## 容器内 agent 的环境说明
+
+镜像内置 `/usr/local/share/docker-codex/agent-notes.md`，记录容器环境
+的关键事实：推送凭证是否已配置、默认使用 mold 链接器、sccache 的
+opt-in 用法、`CARGO_TARGET_DIR` 的位置等。entrypoint 在启动 `codex`
+时自动通过 `-c user_instructions=...` 注入，容器内的 Codex 无需口头
+交代即可了解环境；调用方在 `--` 之后传入的 `-c` 覆盖优先级更高。该
+文件随镜像版本化，调整工具链时应同步更新。
+
 ## 构建缓存
 
 每个 Git common directory 都会获得一个稳定的 Docker volume，名称类似：

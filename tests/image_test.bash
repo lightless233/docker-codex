@@ -59,6 +59,7 @@ test_python_and_archive_tools_are_available() {
     set -euo pipefail
     command -v python3 python pip3 unzip zip >/dev/null
     python3 -m venv --help >/dev/null
+    [[ -r /usr/local/share/docker-codex/agent-notes.md ]]
   '
 }
 

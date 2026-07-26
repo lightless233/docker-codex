@@ -51,6 +51,12 @@ if [[ ${1:-} == codex ]]; then
     printf '%s\n' \
       'docker-codex: warning: container cannot use the current Codex login; file auth can be shared, host keyrings cannot.' >&2
   fi
+  # Give the in-container Codex the environment facts shipped in the image.
+  # Any -c overrides from the caller come later and win.
+  agent_notes=${DOCKER_CODEX_AGENT_NOTES:-/usr/local/share/docker-codex/agent-notes.md}
+  if [[ -r $agent_notes ]]; then
+    set -- codex -c "user_instructions=$(cat "$agent_notes")" "${@:2}"
+  fi
 fi
 
 exec gosu "$HOST_UID:$HOST_GID" "$@"

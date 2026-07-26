@@ -207,6 +207,34 @@ test_cargo_target_dir_is_scoped_per_worktree() {
   assert_line "<ENV_CARGO_TARGET_DIR:$expected>" "$log"
 }
 
+test_agent_notes_are_injected_into_codex_invocation() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local fake_bin="$TEST_TMP/bin"
+  local log="$TEST_TMP/system.log"
+  local notes="$TEST_TMP/agent-notes.md"
+  : >"$log"
+  make_fake_system_commands "$fake_bin"
+  printf 'test container notes\n' >"$notes"
+
+  DOCKER_CODEX_AGENT_NOTES=$notes FAKE_GROUP_EXISTS=1 FAKE_PASSWD_EXISTS=1 \
+    run_entrypoint "$fake_bin" "$log" codex --version
+
+  assert_ordered_lines "$log" \
+    "<codex>" \
+    "<-c>" \
+    "<user_instructions=test container notes>" \
+    "<--version>"
+
+  : >"$log"
+  DOCKER_CODEX_AGENT_NOTES="$TEST_TMP/missing" \
+    FAKE_GROUP_EXISTS=1 FAKE_PASSWD_EXISTS=1 \
+    run_entrypoint "$fake_bin" "$log" codex --version
+
+  assert_no_line "<-c>" "$log"
+  assert_ordered_lines "$log" "<codex>" "<--version>"
+}
+
 init_tests
 test_missing_uid_and_gid_are_created_without_touching_shared_mounts
 test_existing_gid_is_reused_and_existing_uid_skips_user_creation
@@ -214,4 +242,5 @@ test_login_failure_warns_but_still_runs_codex
 test_final_command_exit_status_is_preserved
 test_existing_user_and_package_caches_are_exported_consistently
 test_cargo_target_dir_is_scoped_per_worktree
+test_agent_notes_are_injected_into_codex_invocation
 printf 'entrypoint tests: PASS\n'

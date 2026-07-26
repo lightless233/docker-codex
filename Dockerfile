@@ -93,6 +93,7 @@ RUN npm install --global \
     && pnpm --version
 
 COPY --chmod=0755 container-entrypoint /usr/local/bin/container-entrypoint
+COPY --chmod=0644 agent-notes.md /usr/local/share/docker-codex/agent-notes.md
 
 WORKDIR /workspace
 

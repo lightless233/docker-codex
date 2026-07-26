@@ -265,6 +265,17 @@ scoped to a single repository with minimal permissions and an expiration
 date (for example GitHub fine-grained PATs), and revoke them server-side
 when they are no longer needed.
 
+## Environment notes for the in-container agent
+
+The image ships `/usr/local/share/docker-codex/agent-notes.md`, which
+records key environment facts: whether push credentials are configured, the
+default mold linker, opt-in sccache usage, the `CARGO_TARGET_DIR` location,
+and so on. The entrypoint injects it automatically via
+`-c user_instructions=...` when starting `codex`, so the in-container agent
+knows the environment without being told; `-c` overrides passed by the
+caller after `--` take precedence. The file is versioned with the image —
+update it whenever the toolchain facts change.
+
 ## Build caches
 
 Each Git common directory gets a stable Docker volume named like:
