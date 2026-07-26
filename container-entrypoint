@@ -34,10 +34,12 @@ export npm_config_store_dir=/codex-cache/pnpm-store
 export PNPM_HOME=/codex-cache/pnpm
 export PATH="$PNPM_HOME:$PATH"
 
-# Build artifacts are scoped per worktree: the cache volume is shared by all
-# worktrees of one repository (keyed by the Git common directory), so a
-# single CARGO_TARGET_DIR would leak build.rs fingerprints across them.
-# CARGO_HOME above stays shared so registry and git downloads are reused.
+# The launcher names the cache volume from the Git common directory, so all
+# worktrees of one repository share /codex-cache. Build artifacts must
+# therefore be scoped per worktree (computed from the worktree root below):
+# a single shared CARGO_TARGET_DIR would leak build.rs fingerprints across
+# worktrees. CARGO_HOME above stays shared so registry and git downloads
+# are reused.
 worktree_root=$(
   gosu "$HOST_UID:$HOST_GID" git -C "$PWD" rev-parse --show-toplevel 2>/dev/null ||
     pwd -P

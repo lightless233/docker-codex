@@ -5,6 +5,9 @@ You are running inside a docker-codex development container. Key facts:
 - When `/codex-credentials/pat` exists, Git credentials are already wired
   up through a credential helper: plain `git fetch` / `git pull` /
   `git push` work as-is. Never read, print, or quote the token file.
+- Do not run `git worktree prune` or `git worktree remove` inside the
+  container: sibling worktrees of the mounted checkout are not visible
+  here, so pruning would delete their live registrations on the host.
 - Rust builds link with mold by default (via `RUSTFLAGS`). To reuse
   dependency builds across worktrees, opt into sccache:
   `RUSTC_WRAPPER=sccache SCCACHE_DIR=/codex-cache/sccache cargo build`
