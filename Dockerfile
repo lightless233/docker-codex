@@ -8,6 +8,9 @@ ARG TARGETARCH
 ENV RUSTUP_HOME=/usr/local/rustup
 ENV CARGO_HOME=/usr/local/cargo
 ENV PATH=/usr/local/cargo/bin:${PATH}
+# Use mold as the default linker for faster release builds; a project's own
+# rustflags or `docker run -e RUSTFLAGS=...` override this.
+ENV RUSTFLAGS="-C link-arg=-fuse-ld=mold"
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
@@ -21,6 +24,7 @@ RUN apt-get update \
         gosu \
         jq \
         libssl-dev \
+        mold \
         openssh-client \
         pkg-config \
         python-is-python3 \
@@ -28,6 +32,7 @@ RUN apt-get update \
         python3-pip \
         python3-venv \
         ripgrep \
+        sccache \
         shellcheck \
         sqlite3 \
         sudo \

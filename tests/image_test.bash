@@ -62,9 +62,27 @@ test_python_and_archive_tools_are_available() {
   '
 }
 
+test_mold_is_default_linker_and_sccache_is_available() {
+  # shellcheck disable=SC2016 # Variables expand inside the container.
+  "$DOCKER_BIN" run --rm \
+    --env HOST_UID=12345 \
+    --env HOST_GID=23456 \
+    "$IMAGE" \
+    bash -lc '
+      set -euo pipefail
+      command -v mold sccache >/dev/null
+      [[ $RUSTFLAGS == *fuse-ld=mold* ]]
+      work=$(mktemp -d)
+      cd "$work"
+      cargo init -q --vcs none --name mold-smoke
+      cargo run -q
+    '
+}
+
 init_tests
 test_debian_and_official_node_runtime
 test_runtime_user_has_passwordless_sudo_without_root_group
 test_login_shell_keeps_toolchain_on_path
 test_python_and_archive_tools_are_available
+test_mold_is_default_linker_and_sccache_is_available
 printf 'image tests: PASS\n'

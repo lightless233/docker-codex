@@ -27,13 +27,24 @@ export USER=$RUNTIME_USER
 export LOGNAME=$RUNTIME_USER
 export CODEX_HOME=${CODEX_HOME:-/codex-home}
 export CARGO_HOME=/codex-cache/cargo-home
-export CARGO_TARGET_DIR=/codex-cache/cargo-target
 export XDG_CACHE_HOME=/codex-cache/xdg
 export XDG_DATA_HOME=/codex-cache/xdg-data
 export NPM_CONFIG_CACHE=/codex-cache/npm
 export npm_config_store_dir=/codex-cache/pnpm-store
 export PNPM_HOME=/codex-cache/pnpm
 export PATH="$PNPM_HOME:$PATH"
+
+# Build artifacts are scoped per worktree: the cache volume is shared by all
+# worktrees of one repository (keyed by the Git common directory), so a
+# single CARGO_TARGET_DIR would leak build.rs fingerprints across them.
+# CARGO_HOME above stays shared so registry and git downloads are reused.
+worktree_root=$(
+  gosu "$HOST_UID:$HOST_GID" git -C "$PWD" rev-parse --show-toplevel 2>/dev/null ||
+    pwd -P
+)
+worktree_hash=$(printf '%s' "$worktree_root" | sha256sum | cut -c1-16)
+CARGO_TARGET_DIR="/codex-cache/cargo-targets/$(basename "$worktree_root")-$worktree_hash"
+export CARGO_TARGET_DIR
 
 if [[ ${1:-} == codex ]]; then
   if ! gosu "$HOST_UID:$HOST_GID" codex login status >/dev/null 2>&1; then

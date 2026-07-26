@@ -42,6 +42,7 @@ case $name in
   codex|custom-command)
     printf '<ENV_USER:%s>\n' "${USER:-}" >>"$log"
     printf '<ENV_CARGO_HOME:%s>\n' "${CARGO_HOME:-}" >>"$log"
+    printf '<ENV_CARGO_TARGET_DIR:%s>\n' "${CARGO_TARGET_DIR:-}" >>"$log"
     printf '<ENV_XDG_DATA_HOME:%s>\n' "${XDG_DATA_HOME:-}" >>"$log"
     printf '<ENV_NPM_CONFIG_CACHE:%s>\n' "${NPM_CONFIG_CACHE:-}" >>"$log"
     printf '<ENV_PNPM_STORE_DIR:%s>\n' "${npm_config_store_dir:-}" >>"$log"
@@ -172,10 +173,45 @@ test_existing_user_and_package_caches_are_exported_consistently() {
   assert_line "<existing>" "$log"
 }
 
+test_cargo_target_dir_is_scoped_per_worktree() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local fake_bin="$TEST_TMP/bin"
+  local log="$TEST_TMP/system.log"
+  local repo="$TEST_TMP/work tree"
+  local plain="$TEST_TMP/plain dir"
+  local root expected
+  : >"$log"
+  make_fake_system_commands "$fake_bin"
+  make_repo "$repo"
+
+  (
+    cd "$repo"
+    HOST_UID=1000 HOST_GID=1000 FAKE_GROUP_EXISTS=1 FAKE_PASSWD_EXISTS=1 \
+      run_entrypoint "$fake_bin" "$log" custom-command
+  )
+  root=$(git -C "$repo" rev-parse --show-toplevel)
+  expected="/codex-cache/cargo-targets/$(basename "$root")-$(printf '%s' "$root" | sha256sum | cut -c1-16)"
+  assert_line "<ENV_CARGO_TARGET_DIR:$expected>" "$log"
+  assert_line "<ENV_CARGO_HOME:/codex-cache/cargo-home>" "$log"
+
+  mkdir -p "$plain"
+  : >"$log"
+  (
+    cd "$plain"
+    HOST_UID=1000 HOST_GID=1000 FAKE_GROUP_EXISTS=1 FAKE_PASSWD_EXISTS=1 \
+      run_entrypoint "$fake_bin" "$log" custom-command
+  )
+  root=$(cd "$plain" && pwd -P)
+  expected="/codex-cache/cargo-targets/$(basename "$root")-$(printf '%s' "$root" | sha256sum | cut -c1-16)"
+  assert_line "<ENV_CARGO_TARGET_DIR:$expected>" "$log"
+}
+
 init_tests
 test_missing_uid_and_gid_are_created_without_touching_shared_mounts
 test_existing_gid_is_reused_and_existing_uid_skips_user_creation
 test_login_failure_warns_but_still_runs_codex
 test_final_command_exit_status_is_preserved
 test_existing_user_and_package_caches_are_exported_consistently
+test_cargo_target_dir_is_scoped_per_worktree
 printf 'entrypoint tests: PASS\n'

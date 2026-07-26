@@ -88,6 +88,13 @@ the release's `SHASUMS256.txt`. It also contains pnpm, Rust stable (with
 rustfmt and clippy), Codex CLI, Git, Python 3 (pip and venv), common native
 build dependencies, and shell utilities useful during agentic development.
 An `/etc/profile.d` entry keeps Cargo and pnpm on PATH for login shells.
+The image links Rust builds with mold by default via `RUSTFLAGS` (a project's
+own rustflags or `docker run -e RUSTFLAGS=...` override it), and ships
+sccache for opt-in reuse of dependency builds across worktrees:
+
+```bash
+RUSTC_WRAPPER=sccache SCCACHE_DIR=/codex-cache/sccache cargo build
+```
 
 ## Prerequisites
 
@@ -266,9 +273,13 @@ Each Git common directory gets a stable Docker volume named like:
 docker-codex-cache-<git-path-hash>
 ```
 
-The volume backs `/codex-cache`; Cargo target files, pnpm files, and general
-XDG caches stay inside Docker's Linux filesystem. This is particularly
-important for Rust and Node performance on macOS Docker Desktop.
+The volume backs `/codex-cache`. Cargo registry/git download caches, pnpm
+files, and general XDG caches stay inside Docker's Linux filesystem and are
+shared across all worktrees of one repository, while Cargo build artifacts
+are isolated per worktree under
+`/codex-cache/cargo-targets/<worktree-name>-<path-hash>` so build.rs
+fingerprints cannot leak between worktrees. This is particularly important
+for Rust and Node performance on macOS Docker Desktop.
 
 List or remove caches explicitly:
 

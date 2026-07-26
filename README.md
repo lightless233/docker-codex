@@ -85,7 +85,14 @@ linux-x64 或 linux-arm64 压缩包安装，并使用该版本发布目录中的
 `SHASUMS256.txt` 校验。镜像还包含 pnpm、Rust stable（含 rustfmt 与
 clippy）、Codex CLI、Git、Python 3（pip 与 venv）、常用本地编译依赖，
 以及适合 agent 开发使用的 shell 工具。镜像在 `/etc/profile.d` 中保留
-Cargo 与 pnpm 的 PATH 条目，login shell 不会丢失工具链。
+Cargo 与 pnpm 的 PATH 条目，login shell 不会丢失工具链。镜像默认通过
+`RUSTFLAGS` 使用 mold 链接器加速构建（项目自身的 rustflags 或
+`docker run -e RUSTFLAGS=...` 可覆盖）；如需跨 worktree 复用依赖编译
+结果，可显式启用 sccache：
+
+```bash
+RUSTC_WRAPPER=sccache SCCACHE_DIR=/codex-cache/sccache cargo build
+```
 
 ## 前置条件
 
@@ -265,8 +272,11 @@ docker-codex --pat-path ~/.local/share/docker-codex/pat/github-<repo>
 docker-codex-cache-<git-path-hash>
 ```
 
-该 volume 挂载到 `/codex-cache`。Cargo target、pnpm 文件以及通用 XDG
-缓存都保存在 Docker 的 Linux 文件系统中。对于 macOS Docker Desktop，
+该 volume 挂载到 `/codex-cache`。Cargo 的 registry/git 下载缓存、pnpm
+文件以及通用 XDG 缓存都保存在 Docker 的 Linux 文件系统中，并在同一仓库
+的所有 worktree 之间共享；Cargo 构建产物则按 worktree 隔离在
+`/codex-cache/cargo-targets/<worktree 名>-<路径哈希>` 下，避免
+build.rs 指纹在不同 worktree 之间串扰。对于 macOS Docker Desktop，
 这能显著减少大量小文件跨虚拟文件系统读写造成的性能损耗。
 
 查看或删除缓存：
