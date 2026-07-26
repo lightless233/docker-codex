@@ -35,6 +35,7 @@ RUN apt-get update \
         xz-utils \
         zip \
         zsh \
+        gh \
     && rm -rf /var/lib/apt/lists/*
 
 RUN printf '%s\n' '%sudo ALL=(ALL:ALL) NOPASSWD: ALL' \
