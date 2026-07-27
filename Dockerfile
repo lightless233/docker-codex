@@ -24,11 +24,13 @@ RUN apt-get update \
         gosu \
         jq \
         libssl-dev \
+        libwayland-client0 \
         mold \
         openssh-client \
         pkg-config \
         python-is-python3 \
         python3 \
+        python3-pil \
         python3-pip \
         python3-venv \
         ripgrep \
@@ -37,6 +39,7 @@ RUN apt-get update \
         sqlite3 \
         sudo \
         unzip \
+        wl-clipboard \
         xz-utils \
         zip \
         zsh \
@@ -94,6 +97,7 @@ RUN npm install --global \
 
 COPY --chmod=0755 container-entrypoint /usr/local/bin/container-entrypoint
 COPY --chmod=0644 agent-notes.md /usr/local/share/docker-codex/agent-notes.md
+COPY --chmod=0755 container-powershell-shim /usr/local/bin/powershell.exe
 
 WORKDIR /workspace
 

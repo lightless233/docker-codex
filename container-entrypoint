@@ -22,6 +22,13 @@ fi
 mkdir -p "$RUNTIME_HOME" /codex-cache
 chown "$HOST_UID:$HOST_GID" "$RUNTIME_HOME" /codex-cache
 
+# On WSL the powershell.exe shim writes clipboard images here and prints the
+# matching Windows path, which Codex maps back under /mnt/c before reading.
+if [[ -n ${WSL_DISTRO_NAME:-} ]]; then
+  mkdir -p /mnt/c/codex-clipboard
+  chown "$HOST_UID:$HOST_GID" /mnt/c/codex-clipboard
+fi
+
 export HOME=$RUNTIME_HOME
 export USER=$RUNTIME_USER
 export LOGNAME=$RUNTIME_USER

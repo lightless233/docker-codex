@@ -80,10 +80,42 @@ test_mold_is_default_linker_and_sccache_is_available() {
     '
 }
 
+test_powershell_shim_reads_wayland_clipboard_image() {
+  # shellcheck disable=SC2016,SC2026 # Variables expand inside the container.
+  "$DOCKER_BIN" run --rm \
+    --env HOST_UID=12345 \
+    --env HOST_GID=23456 \
+    --env WSL_DISTRO_NAME=Ubuntu \
+    "$IMAGE" \
+    bash -lc '
+      set -euo pipefail
+      export WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/tmp
+      work=$(mktemp -d)
+      cd "$work"
+      python3 -c "from PIL import Image; Image.new(\"RGB\", (2, 2), (255, 0, 0)).save(\"clip.bmp\", \"BMP\")"
+      printf "#!/usr/bin/env bash\ncase \"\${1:-}\" in --list-types) printf \"image/bmp\\\\n\";; --type|-t) cat \"$work/clip.bmp\";; *) exit 1;; esac\n" > wl-paste
+      chmod +x wl-paste
+      # Use the exact PowerShell script Codex 0.145.0 sends, so the test
+      # breaks if Codex changes the contract the shim emulates.
+      PATH="$work:$PATH" out=$(powershell.exe -NoProfile -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; \$img = Get-Clipboard -Format Image; if (\$img -ne \$null) { \$p=[System.IO.Path]::GetTempFileName(); \$p = [System.IO.Path]::ChangeExtension(\$p,'png'); \$img.Save(\$p,[System.Drawing.Imaging.ImageFormat]::Png); Write-Output \$p } else { exit 1 }")
+      # Codex maps C:\x\y to /mnt/c/x/y before reading the file.
+      [[ $out == C:*.png ]]
+      name=${out##*\\}
+      mapped=/mnt/c/codex-clipboard/$name
+      [[ -f $mapped ]]
+      python3 -c "import sys; from PIL import Image; assert Image.open(sys.argv[1]).format == \"PNG\"" "$mapped"
+      if PATH="$work:$PATH" powershell.exe -NoProfile -Command "Get-ChildItem" 2>/dev/null; then
+        printf "%s\n" "shim unexpectedly handled a non-clipboard call" >&2
+        exit 1
+      fi
+    '
+}
+
 init_tests
 test_debian_and_official_node_runtime
 test_runtime_user_has_passwordless_sudo_without_root_group
 test_login_shell_keeps_toolchain_on_path
 test_python_and_archive_tools_are_available
 test_mold_is_default_linker_and_sccache_is_available
+test_powershell_shim_reads_wayland_clipboard_image
 printf 'image tests: PASS\n'

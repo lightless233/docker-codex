@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# powershell.exe shim for docker-codex containers on WSL.
+#
+# On a WSL host, Codex pastes clipboard images through a Windows
+# PowerShell fallback: Get-Clipboard -Format Image, save as PNG, print
+# the Windows path, then map C:\... to /mnt/c/... before reading. Real
+# WSL interop cannot reach the Windows session from a Docker Desktop
+# container, so this shim emulates that exact contract through the WSLg
+# Wayland clipboard, which the launcher forwards into the container: it
+# writes the PNG under /mnt/c/codex-clipboard and prints the matching
+# Windows-shaped path. Anything that is not a clipboard image read fails.
+set -euo pipefail
+
+clipboard_mode=0
+for arg in "$@"; do
+  if [[ $arg == *Get-Clipboard*Image* ]]; then
+    clipboard_mode=1
+    break
+  fi
+done
+if [[ $clipboard_mode != 1 ]]; then
+  printf '%s\n' \
+    'powershell.exe shim: only clipboard image reads are supported inside docker-codex' >&2
+  exit 1
+fi
+
+command -v wl-paste >/dev/null 2>&1 || {
+  printf '%s\n' 'powershell.exe shim: wl-paste is unavailable' >&2
+  exit 1
+}
+[[ -n ${WAYLAND_DISPLAY:-} && -n ${XDG_RUNTIME_DIR:-} ]] || {
+  printf '%s\n' \
+    'powershell.exe shim: the Wayland clipboard is not forwarded into this container' >&2
+  exit 1
+}
+
+format=
+for candidate in image/png image/bmp; do
+  if wl-paste --list-types 2>/dev/null | grep -qx "$candidate"; then
+    format=$candidate
+    break
+  fi
+done
+# Exit 1 when the clipboard holds no image, mirroring the real fallback.
+[[ -n $format ]] || exit 1
+
+# Codex maps the printed Windows path C:\x\y to /mnt/c/x/y before reading,
+# so the file must live under /mnt/c inside the container and the printed
+# path must be Windows-shaped. The entrypoint pre-creates this directory.
+win_dir=/mnt/c/codex-clipboard
+mkdir -p "$win_dir" 2>/dev/null || {
+  printf '%s\n' "powershell.exe shim: $win_dir is unavailable" >&2
+  exit 1
+}
+
+raw=$(mktemp)
+out=$(mktemp "$win_dir/clipboard-XXXXXXXX.png")
+wl-paste --type "$format" >"$raw" 2>/dev/null
+if [[ ! -s $raw ]]; then
+  rm -f "$raw" "$out"
+  exit 1
+fi
+
+if [[ $format == image/png ]]; then
+  cp "$raw" "$out"
+elif ! python3 -c \
+  'import sys; from PIL import Image; Image.open(sys.argv[1]).save(sys.argv[2], "PNG")' \
+  "$raw" "$out"; then
+  rm -f "$raw" "$out"
+  printf '%s\n' \
+    'powershell.exe shim: failed to convert the clipboard image to PNG' >&2
+  exit 1
+fi
+
+rm -f "$raw"
+printf 'C:\\codex-clipboard\\%s\n' "$(basename "$out")"

@@ -25,6 +25,8 @@ Options:
   --pat-path FILE         Mount a token file read-only at
                           /codex-credentials/pat (DOCKER_CODEX_PAT_PATH sets
                           the default)
+  --disable-clipboard     Do not forward the host clipboard (display sockets)
+                          into the container
   --help, -h              Show this help
 
 Arguments after -- are passed to Codex without reinterpretation.
@@ -123,6 +125,7 @@ IMAGE=${DOCKER_CODEX_IMAGE:-docker-codex:local}
 HOST_OS=${DOCKER_CODEX_HOST_OS:-$(uname -s)}
 BUILD=0
 ISOLATED=
+CLIPBOARD=1
 BIND_SPECS=()
 PAT_VALUE=
 PAT_PATH=${DOCKER_CODEX_PAT_PATH:-}
@@ -158,6 +161,10 @@ while (($#)); do
       (($# >= 2)) || die "--pat-path requires a file"
       PAT_PATH=$2
       shift 2
+      ;;
+    --disable-clipboard)
+      CLIPBOARD=0
+      shift
       ;;
     --)
       shift
@@ -275,6 +282,43 @@ if [[ $HOST_OS == Linux ]]; then
   DOCKER_ARGS+=(--add-host "host.docker.internal:host-gateway")
 elif [[ $HOST_OS != Darwin ]]; then
   die "unsupported host OS: $HOST_OS"
+fi
+
+# Clipboard image paste is forwarded by default; --disable-clipboard opts
+# out. On WSLg only the Wayland socket is needed: the powershell.exe shim
+# reads images through wl-paste, and Codex's first X11 attempt fails fast
+# into that fallback. Native Linux reads the clipboard through the X11
+# socket directly. Sockets are mounted as single read-only file binds.
+if ((CLIPBOARD)); then
+  if [[ -n ${WSL_DISTRO_NAME:-} ]]; then
+    DOCKER_ARGS+=(--env "WSL_DISTRO_NAME=$WSL_DISTRO_NAME")
+    wayland_dir=${DOCKER_CODEX_WAYLAND_DIR:-/mnt/wslg/runtime-dir}
+  else
+    wayland_dir=${DOCKER_CODEX_WAYLAND_DIR:-${XDG_RUNTIME_DIR:-}}
+  fi
+  if [[ -n ${WAYLAND_DISPLAY:-} && -n $wayland_dir &&
+        -e $wayland_dir/$WAYLAND_DISPLAY ]]; then
+    reject_mount_comma "$wayland_dir"
+    DOCKER_ARGS+=(--mount "type=bind,source=$wayland_dir/$WAYLAND_DISPLAY,target=/run/docker-codex/$WAYLAND_DISPLAY,readonly")
+    DOCKER_ARGS+=(--env "WAYLAND_DISPLAY=$WAYLAND_DISPLAY")
+    DOCKER_ARGS+=(--env "XDG_RUNTIME_DIR=/run/docker-codex")
+  fi
+  if [[ -z ${WSL_DISTRO_NAME:-} && -n ${DISPLAY:-} ]]; then
+    x11_dir=${DOCKER_CODEX_X11_DIR:-/tmp/.X11-unix}
+    x11_num=${DISPLAY%%.*}
+    x11_num=${x11_num#*:}
+    x11_socket=$x11_dir/X$x11_num
+    if [[ -e $x11_socket ]]; then
+      reject_mount_comma "$x11_socket"
+      DOCKER_ARGS+=(--mount "type=bind,source=$x11_socket,target=$x11_socket,readonly")
+      DOCKER_ARGS+=(--env "DISPLAY=$DISPLAY")
+      if [[ -n ${XAUTHORITY:-} && -f $XAUTHORITY ]]; then
+        reject_mount_comma "$XAUTHORITY"
+        DOCKER_ARGS+=(--mount "type=bind,source=$XAUTHORITY,target=$XAUTHORITY,readonly")
+        DOCKER_ARGS+=(--env "XAUTHORITY=$XAUTHORITY")
+      fi
+    fi
+  fi
 fi
 
 "$DOCKER_BIN" info >/dev/null 2>&1 ||

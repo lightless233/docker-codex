@@ -313,6 +313,85 @@ test_pat_options_reject_invalid_input() {
   assert_no_line "<run>" "$TEST_DOCKER_LOG"
 }
 
+test_display_sockets_are_forwarded_when_present() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  local wayland_dir="$TEST_TMP/wayland runtime"
+  make_repo "$repo"
+  mkdir -p "$wayland_dir"
+  : >"$wayland_dir/wayland-0"
+  prepare_fake_runtime "$TEST_TMP"
+
+  DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 WSL_DISTRO_NAME=Ubuntu \
+  DOCKER_CODEX_WAYLAND_DIR=$wayland_dir \
+    run_launcher "$repo" "$ROOT" -- status
+
+  assert_line "<type=bind,source=$wayland_dir/wayland-0,target=/run/docker-codex/wayland-0,readonly>" "$TEST_DOCKER_LOG"
+  assert_line "<WAYLAND_DISPLAY=wayland-0>" "$TEST_DOCKER_LOG"
+  assert_line "<XDG_RUNTIME_DIR=/run/docker-codex>" "$TEST_DOCKER_LOG"
+  assert_line "<WSL_DISTRO_NAME=Ubuntu>" "$TEST_DOCKER_LOG"
+  # WSLg does not need X11: the shim reads images through wl-paste.
+  assert_no_line "<DISPLAY=:0>" "$TEST_DOCKER_LOG"
+}
+
+test_native_linux_x11_socket_is_forwarded_readonly() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  local x11_dir="$TEST_TMP/x11"
+  make_repo "$repo"
+  mkdir -p "$x11_dir"
+  : >"$x11_dir/X0"
+  prepare_fake_runtime "$TEST_TMP"
+
+  DISPLAY=:0 WAYLAND_DISPLAY='' WSL_DISTRO_NAME='' \
+  DOCKER_CODEX_X11_DIR=$x11_dir \
+    run_launcher "$repo" "$ROOT" -- status
+
+  assert_line "<type=bind,source=$x11_dir/X0,target=$x11_dir/X0,readonly>" "$TEST_DOCKER_LOG"
+  assert_line "<DISPLAY=:0>" "$TEST_DOCKER_LOG"
+}
+
+test_display_sockets_are_not_forwarded_when_absent() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+
+  DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 WSL_DISTRO_NAME='' \
+  DOCKER_CODEX_X11_DIR="$TEST_TMP/missing-x11" \
+  DOCKER_CODEX_WAYLAND_DIR="$TEST_TMP/missing-wayland" \
+    run_launcher "$repo" "$ROOT" -- status
+
+  assert_no_line "<DISPLAY=:0>" "$TEST_DOCKER_LOG"
+  assert_no_line "<WAYLAND_DISPLAY=wayland-0>" "$TEST_DOCKER_LOG"
+  assert_no_line "<WSL_DISTRO_NAME=>" "$TEST_DOCKER_LOG"
+}
+
+test_disable_clipboard_skips_all_display_forwarding() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  local x11_dir="$TEST_TMP/x11"
+  local wayland_dir="$TEST_TMP/wayland runtime"
+  make_repo "$repo"
+  mkdir -p "$x11_dir" "$wayland_dir"
+  : >"$x11_dir/X0"
+  : >"$wayland_dir/wayland-0"
+  prepare_fake_runtime "$TEST_TMP"
+
+  DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 WSL_DISTRO_NAME=Ubuntu \
+  DOCKER_CODEX_X11_DIR=$x11_dir DOCKER_CODEX_WAYLAND_DIR=$wayland_dir \
+    run_launcher "$repo" "$ROOT" --disable-clipboard -- status
+
+  assert_no_line "<DISPLAY=:0>" "$TEST_DOCKER_LOG"
+  assert_no_line "<WAYLAND_DISPLAY=wayland-0>" "$TEST_DOCKER_LOG"
+  assert_no_line "<WSL_DISTRO_NAME=Ubuntu>" "$TEST_DOCKER_LOG"
+  assert_no_line "<XDG_RUNTIME_DIR=/run/docker-codex>" "$TEST_DOCKER_LOG"
+}
+
 test_help_documents_public_interface_and_retained_worktrees() {
   local TEST_TMP
   TEST_TMP=$(new_tmp)
@@ -326,6 +405,7 @@ test_help_documents_public_interface_and_retained_worktrees() {
   assert_contains "--bind PATH[:ro]" "$output"
   assert_contains "--pat TOKEN" "$output"
   assert_contains "--pat-path FILE" "$output"
+  assert_contains "--disable-clipboard" "$output"
   assert_contains "--help" "$output"
   assert_contains "docker-codex:local" "$output"
   assert_contains "retained" "$output"
@@ -345,5 +425,9 @@ test_isolated_mode_rejects_detached_head
 test_pat_path_mounts_file_and_injects_git_credential_config
 test_pat_value_is_stored_under_data_home_and_never_passed_as_argument
 test_pat_options_reject_invalid_input
+test_display_sockets_are_forwarded_when_present
+test_native_linux_x11_socket_is_forwarded_readonly
+test_display_sockets_are_not_forwarded_when_absent
+test_disable_clipboard_skips_all_display_forwarding
 test_help_documents_public_interface_and_retained_worktrees
 printf 'launcher tests: PASS\n'
