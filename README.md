@@ -2,374 +2,42 @@
 
 **简体中文** | [English](README.en.md)
 
-在开发容器中运行 Codex CLI，同时直接编辑调用者当前的 Git checkout。
-启动器会共享宿主机上的 Codex home，能够识别普通 checkout、linked
-worktree 和 submodule；只有在用户明确指定时，它才会创建新的 worktree。
+在 Docker 容器里运行 Codex CLI 的启动脚本。容器挂载你当前的 Git checkout，Codex 的修改直接落在宿主机文件上；`~/.codex` 共享，登录态和配置不用再弄一份。容器摸不到系统的其他部分，可以放心让它全自动干活。
 
 ## 快速开始
 
-开始前请确认 Docker daemon 已启动，并且宿主机上已经存在可用的
-`${CODEX_HOME:-$HOME/.codex}`。
-
-### 1. 首次构建
-
-进入本仓库并构建镜像：
+前置条件：Git、Bash 3.2+、Docker daemon 已启动，宿主机上有 `~/.codex`（在本机用过 Codex CLI 就有）。
 
 ```bash
+# 构建镜像，只需一次
 cd /absolute/path/to/docker-codex
 ./docker-codex --build -- --version
-```
 
-构建完成后应输出当前镜像内的 Codex CLI 版本。后续启动会直接复用本地
-`docker-codex:local`，不需要重复构建。
-
-### 2. 安装启动器
-
-不要把整个仓库加入 `PATH`。构建完成后，只把启动脚本安装到
-`/usr/local/bin`：
-
-```bash
+# 安装启动器
 sudo install -m 0755 ./docker-codex /usr/local/bin/docker-codex
-```
 
-如果不希望使用 `sudo`，也可以安装到用户目录：
-
-```bash
-install -d "$HOME/.local/bin"
-install -m 0755 ./docker-codex "$HOME/.local/bin/docker-codex"
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-仅当 `~/.local/bin` 尚未在 `PATH` 中时，才需要把最后一行加入
-`~/.bashrc` 或 `~/.zshrc`。
-
-### 3. 启动 Codex
-
-进入需要开发的 Git checkout，然后运行：
-
-```bash
-cd /absolute/path/to/your-project
+# 随便进一个项目，启动
+cd /path/to/your-project
 docker-codex
 ```
 
-常用示例：
+启动之后和平时的 Codex 没什么区别，只是跑在容器里。
 
-```bash
-# 直接向 Codex 传递参数
-docker-codex -- review "review the current branch"
+没有 `sudo` 就装到用户目录：`install -m 0755 ./docker-codex "$HOME/.local/bin/docker-codex"`（记得把 `~/.local/bin` 加进 `PATH`）。重建镜像要回到这个仓库跑 `./docker-codex --build`；启动器脚本有更新就重新执行一次 `install`。
 
-# 创建并使用保留的隔离 worktree
-docker-codex --isolated issue-123
-
-# 挂载 checkout 之外的只读目录
-docker-codex --bind /absolute/path/to/fixtures:ro --
-```
+支持 Linux、WSL2、macOS（Docker Desktop，含 Apple Silicon）。
 
 > [!WARNING]
-> 启动器默认使用 `--yolo`，并以读写方式挂载当前 checkout、必要的 Git
-> metadata 和宿主 Codex home。请只在你信任的项目和 Docker 隔离环境中
-> 使用。
+> 默认 `--yolo`，并且以读写方式挂载当前 checkout、必要的 Git metadata 和宿主 Codex home。只在你信任的项目里用。容器进程还会带 `--disable apps`，只影响当次进程，不改共享配置。
 
-启动器还会为本次容器进程传入 `--disable apps`，默认关闭 Apps/连接器，
-避免内置 `codex_apps` MCP 的启动问题影响本地开发。它不会修改宿主机共享的
-`config.toml`。
-
-支持的宿主平台：
-
-- Linux
-- WSL2
-- 使用 Docker Desktop 的 macOS，包括 Apple Silicon
-
-镜像基于 Debian 13 slim。Node.js 24.18.0 LTS 从 nodejs.org 官方提供的
-linux-x64 或 linux-arm64 压缩包安装，并使用该版本发布目录中的
-`SHASUMS256.txt` 校验。镜像还包含 pnpm、Rust stable（含 rustfmt 与
-clippy）、Codex CLI、Git、Python 3（pip 与 venv）、常用本地编译依赖，
-以及适合 agent 开发使用的 shell 工具。镜像在 `/etc/profile.d` 中保留
-Cargo 与 pnpm 的 PATH 条目，login shell 不会丢失工具链。镜像默认通过
-`RUSTFLAGS` 使用 mold 链接器加速构建（项目自身的 rustflags 或
-`docker run -e RUSTFLAGS=...` 可覆盖）；如需跨 worktree 复用依赖编译
-结果，可显式启用 sccache：
+几个常用的进阶参数：
 
 ```bash
-RUSTC_WRAPPER=sccache SCCACHE_DIR=/codex-cache/sccache cargo build
+docker-codex -- review "review the current branch"   # -- 后面的参数原样传给 Codex
+docker-codex --isolated issue-123                    # 开个隔离 worktree 干活 → docs/zh/worktree.md
+docker-codex --bind /path/to/fixtures:ro --          # 额外挂一个只读目录 → docs/zh/worktree.md
+docker-codex --pat-path ~/.local/share/docker-codex/pat/github-x  # 容器里要 git push → docs/zh/credentials.md
 ```
-
-## 前置条件
-
-- Git
-- Bash 3.2 或更高版本
-- Docker，并且 Docker daemon 已启动
-- 已存在的 Codex home，通常为 `~/.codex`
-
-在本仓库中构建本地镜像：
-
-```bash
-./docker-codex --build -- --version
-```
-
-然后安装单文件启动器：
-
-```bash
-sudo install -m 0755 ./docker-codex /usr/local/bin/docker-codex
-```
-
-复制后的启动器可以在没有源码仓库的情况下正常启动已有镜像。`--build`
-仍然需要仓库中的 `Dockerfile` 和 `container-entrypoint`，因此重新构建镜像
-时应回到源码仓库运行 `./docker-codex --build`；更新启动器后再次执行上面的
-`install` 命令。
-
-后续启动会复用 `docker-codex:local`：
-
-```bash
-cd /path/to/project
-docker-codex
-```
-
-启动器会在 `codex` 后自动加入 `--yolo --disable apps`。Apps/连接器只在
-当前容器进程中关闭，宿主机共享的 Codex 配置不会被修改。`--` 后面的参数
-会原样传给 Codex：
-
-```bash
-docker-codex -- review "review the current branch"
-```
-
-## Checkout 与 worktree
-
-默认情况下，启动器直接使用当前目录所属的 checkout，不会创建分支或
-worktree。
-
-checkout 会挂载到容器内完全相同的绝对路径。如果当前 checkout 是 linked
-worktree 或 submodule，并且 Git metadata 位于其他目录，启动器会通过 Git
-自动发现这些目录，只补充挂载必要的外部 Git metadata，并保持宿主机与
-容器内路径一致。
-
-例如，可以直接使用一个长期存在的 linked worktree：
-
-```bash
-cd /home/me/program/my-long-lived-worktree
-docker-codex
-```
-
-容器对 Git common directory 拥有写权限，因为暂存和提交操作需要更新
-index 与 refs。除非通过额外参数显式挂载，否则容器无法访问其他 sibling
-worktree。
-
-### 可选的隔离 worktree
-
-需要新建隔离 worktree 时，显式指定：
-
-```bash
-docker-codex --isolated issue-123
-```
-
-该命令会创建：
-
-- 分支 `codex/issue-123`
-- 位于以下目录的 worktree：
-  `${DOCKER_CODEX_DATA_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/docker-codex}/worktrees`
-- 使用新 worktree 启动的容器
-
-Codex 或 Docker 退出后，worktree 和分支都会保留；即使启动失败也不会自动
-删除。请使用标准 Git 命令查看和清理：
-
-```bash
-git worktree list
-git worktree remove /absolute/path/from-the-list
-git branch -d codex/issue-123
-```
-
-如果 worktree 中存在未提交改动，Git 会拒绝普通删除，除非用户明确强制
-执行。启动器自身绝不会自动删除 worktree。
-
-## 挂载额外的项目目录
-
-项目需要 checkout 之外的 fixture、工具或其他目录时，可以重复使用
-`--bind`：
-
-```bash
-docker-codex \
-  --bind /absolute/path/to/fixtures:ro \
-  --bind /absolute/path/to/local-tooling \
-  --
-```
-
-这些目录会挂载到容器内相同的绝对路径。只接受目录；追加 `:ro` 表示只读。
-包含英文逗号的路径会被拒绝，因为 Docker 的 `--mount` 语法无法无歧义地
-表示此类路径。
-
-启动器不会直接挂载 checkout 的父目录，避免容器意外获得其他仓库或长期
-worktree 的访问权限。
-
-## Codex 配置、记忆与认证
-
-宿主机完整的 `${CODEX_HOME:-$HOME/.codex}` 会以读写方式挂载到
-`/codex-home`，同时容器内设置：
-
-```text
-CODEX_HOME=/codex-home
-```
-
-因此宿主和容器可以共享：
-
-- Codex 配置
-- 本地 memory
-- session 与其他持久状态
-- skills 和 plugins
-- 文件形式保存的认证信息
-
-宿主和容器中的多个 Codex 进程共享状态，其行为与宿主机上同时运行多个
-Codex 进程相同。升级状态格式时，建议让镜像内 Codex CLI 与宿主版本保持
-一致。
-
-认证存在操作系统边界：
-
-- 保存在 `auth.json` 中的凭据可以通过目录挂载共享
-- Linux keyring 和 macOS Keychain 不会进入 Linux 容器
-
-入口脚本会执行 `codex login status`。如果检查失败，它会输出警告但继续
-启动，让 Codex 自己接管后续交互登录。启动器不会修改
-`cli_auth_credentials_store`，也不会把凭据复制进镜像层。
-
-如果 `config.toml` 引用了其他宿主机绝对路径，需要通过 `--bind` 补充挂载。
-配置中的 STDIO MCP 命令和本地工具也必须已经安装在镜像中，或者显式挂载到
-容器内。
-
-## 向容器提供 Git 推送凭证
-
-容器默认没有任何 Git 凭证，推送会失败。启动器提供两种显式 opt-in
-方式，把 token 以只读文件挂载到容器内固定路径
-`/codex-credentials/pat`，并通过 `GIT_CONFIG_*` 环境变量注入通用的
-credential helper 和 origin host 的 SSH→HTTPS `insteadOf` 重写。这些
-配置只存在于容器进程的环境中，不会写入任何与宿主共享的配置文件。
-
-推荐把 token 保存在 checkout 之外的专用文件中：
-
-```bash
-install -d -m 700 ~/.local/share/docker-codex/pat
-$EDITOR ~/.local/share/docker-codex/pat/github-<repo>   # 只写 token 一行
-chmod 600 ~/.local/share/docker-codex/pat/github-<repo>
-
-docker-codex --pat-path ~/.local/share/docker-codex/pat/github-<repo>
-```
-
-可以用 `DOCKER_CODEX_PAT_PATH` 设置默认路径，避免每次输入。
-
-`--pat TOKEN` 直接在命令行传入 token：启动器会把它写入 data home 下的
-`pat/<repo-id>`（目录 700、文件 600），再走相同的挂载逻辑。注意 token
-值会留在 shell 历史和进程列表里，**这只是无法准备 token 文件时的兜底
-方案，优先使用 `--pat-path`**；确实需要用 `--pat` 时，请确认 token 按
-最小权限签发、可随时撤销且有效期短。
-
-凭证进入容器后，agent 可以读取它。请只使用限定单个仓库、权限最小、
-带过期时间的 token（如 GitHub fine-grained PAT），不再需要时在服务端
-撤销即可。
-
-## 容器内 agent 的环境说明
-
-镜像内置 `/usr/local/share/docker-codex/agent-notes.md`，记录容器环境
-的关键事实：推送凭证是否已配置、默认使用 mold 链接器、sccache 的
-opt-in 用法、`CARGO_TARGET_DIR` 的位置等。entrypoint 在启动 `codex`
-时自动通过 `-c user_instructions=...` 注入，容器内的 Codex 无需口头
-交代即可了解环境；调用方在 `--` 之后传入的 `-c` 覆盖优先级更高。该
-文件随镜像版本化，调整工具链时应同步更新。
-
-## 构建缓存
-
-每个 Git common directory 都会获得一个稳定的 Docker volume，名称类似：
-
-```text
-docker-codex-cache-<git-path-hash>
-```
-
-该 volume 挂载到 `/codex-cache`。Cargo 的 registry/git 下载缓存、pnpm
-文件以及通用 XDG 缓存都保存在 Docker 的 Linux 文件系统中，并在同一仓库
-的所有 worktree 之间共享；Cargo 构建产物则按 worktree 隔离在
-`/codex-cache/cargo-targets/<worktree 名>-<路径哈希>` 下，避免
-build.rs 指纹在不同 worktree 之间串扰。对于 macOS Docker Desktop，
-这能显著减少大量小文件跨虚拟文件系统读写造成的性能损耗。
-
-查看或删除缓存：
-
-```bash
-docker volume ls --filter name=docker-codex-cache-
-docker volume rm docker-codex-cache-<git-path-hash>
-```
-
-删除缓存只会清除可以重新生成的依赖和构建产物。
-
-## 平台说明
-
-### Linux 与 WSL2
-
-入口脚本会把容器进程映射为宿主机的数值 UID/GID，并通过 Docker 的
-`host-gateway` 添加 `host.docker.internal`。
-
-在 WSL2 中，构建性能敏感的项目建议存放在 Linux 文件系统内，而不是
-`/mnt/c`。
-
-启动器默认转发剪贴板能力（`--disable-clipboard` 可关闭），容器内的
-Codex 可以直接读取截图。挂载被限制为单个 socket 文件的只读挂载：
-WSLg 下只挂载 Wayland socket（取图实际走 wl-paste，不需要 X11）；
-原生 Linux 下挂载宿主 `XDG_RUNTIME_DIR` 中的 Wayland socket 以及 X11
-socket（`XAUTHORITY` 存在时同样只读挂载）。注意容器内的任意进程都
-可以读取宿主剪贴板，粘贴密码等敏感内容前请留意。
-
-WSL 宿主上的 Codex 实际是通过 Windows PowerShell 回退读取剪贴板图像
-的，而 Docker Desktop 容器无法使用 WSL interop 触达 Windows 会话。
-镜像因此内置了一个 `powershell.exe` shim：它模拟 Codex 0.145.0 期望
-的调用契约（包括 Windows 路径到 `/mnt/c` 的映射），通过转发进来的
-WSLg Wayland 剪贴板取图并转成 PNG。shim 只处理剪贴板图像读取，其他
-`powershell.exe` 调用一律失败。它与 Codex 内部实现耦合，属于临时
-兼容层；上游提供正式的剪贴板读取接口后应移除。
-
-### macOS
-
-Docker Desktop 必须允许共享 checkout、外部 Git metadata、Codex home
-以及所有 `--bind` 源目录。默认情况下，`/Users` 下的路径通常已经包含在
-Docker Desktop 的文件共享设置中。
-
-入口脚本能够处理 macOS 常见的 UID 501/GID 20，不假设对应组名一定未被
-Debian 占用。宿主机 Keychain 中的凭据仍然无法进入容器。
-
-在 Apple Silicon 上，本地构建会生成原生 Linux arm64 镜像。如果项目明确
-需要 Linux amd64 环境，可以手动选择平台：
-
-```bash
-DOCKER_DEFAULT_PLATFORM=linux/amd64 ./docker-codex --build -- --version
-```
-
-通过模拟运行 amd64 镜像时，构建和运行速度都会更慢。
-
-## 安全边界
-
-容器首先以 root 身份进入 entrypoint，只用于：
-
-- 映射宿主 UID/GID
-- 初始化容器私有 home
-- 初始化 `/codex-cache`
-- 配置运行用户
-
-随后通过 `gosu` 以宿主机的数值 UID/GID 运行 Codex。入口脚本不会递归
-修改 checkout、Git metadata 或 `/codex-home` 的所有权，因此普通命令在
-bind mount 中创建的文件仍属于宿主用户。
-
-容器运行用户拥有免密 sudo，可以在必要时获得容器内 root 权限，但不会被
-加入 root 组。
-
-启动器默认使用 `--yolo`，这会关闭 Codex 自身的审批和命令沙箱。所有读写
-挂载都会完整暴露给 agent，Docker 是外层隔离边界。启动器不会使用
-`--privileged`。
-
-启动器绝不会自动挂载：
-
-- `/var/run/docker.sock`
-- 宿主机根目录或整个 home
-- checkout 的共同父目录
-- SSH/GPG agent 或私钥
-- 无关仓库
-
-Codex 可以自由修改所有被明确以读写方式挂载的路径。除此之外的内容仍由
-Docker 隔离。
 
 ## 命令行选项
 
@@ -402,40 +70,14 @@ Docker 隔离。
     输出帮助。
 ```
 
-构建时可以显式修改工具版本：
+构建时改工具版本用 `--build-arg`，见[开发与验证](docs/zh/development.md)。
 
-```bash
-docker build \
-  --build-arg NODE_VERSION=24.18.0 \
-  --build-arg CODEX_VERSION=0.145.0 \
-  --build-arg PNPM_VERSION=10.14.0 \
-  -t docker-codex:local .
-```
+## 文档
 
-`NODE_VERSION` 只会通过显式 build arg 或代码修改升级。镜像不会从 Debian
-或第三方软件源安装 Node.js/npm。
-
-## 验证
-
-运行 shell 测试：
-
-```bash
-tests/run.bash
-```
-
-检查并构建镜像，然后运行真实容器测试：
-
-```bash
-docker build --check .
-docker build -t docker-codex:local .
-DOCKER_CODEX_TEST_IMAGE=docker-codex:local tests/image_test.bash
-```
-
-shell 测试会使用真实的临时 Git 仓库、linked worktree 和 submodule，只在
-Docker 外部边界使用 fake command。独立的镜像测试会运行真实容器，验证
-Debian、Node 安装来源、数值 UID/GID、未加入 root 组以及免密 sudo。
-
-Linux 镜像构建和运行时 smoke test 已纳入发布验证。macOS 参数分支和多架构
-镜像定义有自动化覆盖，但本项目尚未在真实 macOS Docker Desktop/Apple
-Silicon 环境中执行过，不能根据 Linux 测试结果推断已经完成 macOS 实机
-验证。
+- [Checkout 与 worktree](docs/zh/worktree.md)：挂载规则、`--isolated`、`--bind`。
+- [认证与凭证](docs/zh/credentials.md)：Codex home 怎么共享、容器里怎么 `git push`。
+- [镜像环境与构建缓存](docs/zh/environment.md)：镜像里装了什么、缓存 volume 怎么管。
+- [剪贴板转发](docs/zh/clipboard.md)：容器里贴图的原理和 `--disable-clipboard`。
+- [平台说明](docs/zh/platforms.md)：WSL2 和 macOS 的坑。
+- [安全边界](docs/zh/security.md)：容器有哪些权限、启动器绝不挂什么。
+- [开发与验证](docs/zh/development.md)：跑测试、改构建版本。
