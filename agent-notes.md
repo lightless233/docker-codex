@@ -1,6 +1,6 @@
-# docker-codex container environment
+# docker-agent container environment
 
-You are running inside a docker-codex development container. Key facts:
+You are running inside a docker-agent development container. Key facts:
 
 - When `/codex-credentials/pat` exists, Git credentials are already wired
   up through a credential helper: plain `git fetch` / `git pull` /

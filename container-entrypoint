@@ -5,6 +5,116 @@ HOST_UID=${HOST_UID:?HOST_UID is required}
 HOST_GID=${HOST_GID:?HOST_GID is required}
 RUNTIME_HOME=/home/codex
 
+array_contains() {
+  local needle=$1 item
+  shift
+  for item in "$@"; do
+    [[ $item == "$needle" ]] && return 0
+  done
+  return 1
+}
+
+load_claude_profile() {
+  local file=$1 kind=$2
+  local line key value assignment
+  local seen_keys=() assignments=()
+  local has_base=0 has_auth_token=0 has_api_key=0
+
+  [[ -e $file ]] || {
+    printf 'docker-agent: Claude profile does not exist: %s\n' "$file" >&2
+    return 1
+  }
+  [[ ! -L $file && -f $file ]] || {
+    printf 'docker-agent: Claude profile must be a regular non-symlink file: %s\n' \
+      "$file" >&2
+    return 1
+  }
+  [[ $(stat -c %u "$file") == "$HOST_UID" ]] || {
+    printf 'docker-agent: Claude profile has unexpected owner: %s\n' "$file" >&2
+    return 1
+  }
+  [[ $(stat -c %a "$file") == 600 ]] || {
+    printf 'docker-agent: Claude profile must have mode 600: %s\n' "$file" >&2
+    return 1
+  }
+
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ $line =~ ^[[:space:]]*$ ]] && continue
+    [[ $line =~ ^[[:space:]]*# ]] && continue
+    [[ $line == *=* ]] || {
+      printf '%s\n' 'docker-agent: invalid Claude profile assignment' >&2
+      return 1
+    }
+    key=${line%%=*}
+    value=${line#*=}
+    [[ $key =~ ^[A-Z][A-Z0-9_]*$ ]] || {
+      printf 'docker-agent: invalid Claude profile key: %s\n' "$key" >&2
+      return 1
+    }
+    if array_contains "$key" "${seen_keys[@]}"; then
+      printf 'docker-agent: duplicate Claude profile key: %s\n' "$key" >&2
+      return 1
+    fi
+    seen_keys+=("$key")
+
+    case $key in
+      ANTHROPIC_BASE_URL)
+        [[ -n $value ]] || {
+          printf '%s\n' 'docker-agent: empty ANTHROPIC_BASE_URL' >&2
+          return 1
+        }
+        has_base=1
+        ;;
+      ANTHROPIC_AUTH_TOKEN)
+        [[ -n $value ]] || {
+          printf '%s\n' 'docker-agent: empty ANTHROPIC_AUTH_TOKEN' >&2
+          return 1
+        }
+        has_auth_token=1
+        ;;
+      ANTHROPIC_API_KEY)
+        [[ -n $value ]] || {
+          printf '%s\n' 'docker-agent: empty ANTHROPIC_API_KEY' >&2
+          return 1
+        }
+        has_api_key=1
+        ;;
+      ANTHROPIC_MODEL|ANTHROPIC_DEFAULT_OPUS_MODEL|ANTHROPIC_DEFAULT_SONNET_MODEL|ANTHROPIC_DEFAULT_HAIKU_MODEL|CLAUDE_CODE_SUBAGENT_MODEL)
+        ;;
+      CLAUDE_CODE_EFFORT_LEVEL)
+        [[ $value =~ ^(low|medium|high|xhigh|max|auto)$ ]] || {
+          printf '%s\n' \
+            'docker-agent: invalid CLAUDE_CODE_EFFORT_LEVEL' >&2
+          return 1
+        }
+        ;;
+      *)
+        printf 'docker-agent: unsupported Claude profile key: %s\n' "$key" >&2
+        return 1
+        ;;
+    esac
+    assignments+=("$key=$value")
+  done <"$file"
+
+  if [[ $kind == official-api ]]; then
+    ((has_api_key == 1 && has_auth_token == 0 && has_base == 0)) || {
+      printf '%s\n' \
+        'docker-agent: official API profile requires only ANTHROPIC_API_KEY' >&2
+      return 1
+    }
+  else
+    ((has_base == 1 && has_auth_token + has_api_key == 1)) || {
+      printf '%s\n' \
+        'docker-agent: custom profile requires endpoint and exactly one credential' >&2
+      return 1
+    }
+  fi
+
+  for assignment in "${assignments[@]}"; do
+    export "${assignment?}"
+  done
+}
+
 if ! getent group "$HOST_GID" >/dev/null; then
   groupadd --gid "$HOST_GID" docker-codex
 fi
@@ -62,9 +172,65 @@ if [[ ${1:-} == codex ]]; then
   fi
   # Give the in-container Codex the environment facts shipped in the image.
   # Any -c overrides from the caller come later and win.
-  agent_notes=${DOCKER_CODEX_AGENT_NOTES:-/usr/local/share/docker-codex/agent-notes.md}
+  agent_notes=${DOCKER_AGENT_AGENT_NOTES:-${DOCKER_CODEX_AGENT_NOTES:-/usr/local/share/docker-agent/agent-notes.md}}
   if [[ -r $agent_notes ]]; then
     set -- codex -c "user_instructions=$(cat "$agent_notes")" "${@:2}"
+  fi
+elif [[ ${1:-} == claude ]]; then
+  connection=${DOCKER_AGENT_CLAUDE_CONNECTION:-}
+  [[ -n $connection ]] || {
+    printf '%s\n' 'docker-agent: Claude connection is required' >&2
+    exit 1
+  }
+  case $connection in
+    official-subscription)
+      [[ -z ${DOCKER_AGENT_CLAUDE_PROFILE_FILE:-} ]] || {
+        printf '%s\n' \
+          'docker-agent: official subscription must not use a profile file' >&2
+        exit 1
+      }
+      ;;
+    official-api)
+      [[ -n ${DOCKER_AGENT_CLAUDE_PROFILE_FILE:-} ]] || {
+        printf '%s\n' \
+          'docker-agent: official API connection requires a profile file' >&2
+        exit 1
+      }
+      load_claude_profile \
+        "$DOCKER_AGENT_CLAUDE_PROFILE_FILE" official-api
+      ;;
+    profile:*)
+      [[ -n ${DOCKER_AGENT_CLAUDE_PROFILE_FILE:-} ]] || {
+        printf '%s\n' \
+          'docker-agent: custom Claude connection requires a profile file' >&2
+        exit 1
+      }
+      load_claude_profile \
+        "$DOCKER_AGENT_CLAUDE_PROFILE_FILE" custom
+      ;;
+    *)
+      printf 'docker-agent: unsupported Claude connection: %s\n' \
+        "$connection" >&2
+      exit 1
+      ;;
+  esac
+
+  export TZ=Etc/UTC
+  export LANG=en_US.UTF-8
+  export LC_ALL=en_US.UTF-8
+  export LANGUAGE=en_US:en
+  export DISABLE_AUTOUPDATER=1
+  export DISABLE_TELEMETRY=1
+  export DISABLE_ERROR_REPORTING=1
+  export DISABLE_FEEDBACK_COMMAND=1
+  export CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1
+
+  agent_notes=${DOCKER_AGENT_AGENT_NOTES:-/usr/local/share/docker-agent/agent-notes.md}
+  if [[ -r $agent_notes ]]; then
+    set -- claude --dangerously-skip-permissions \
+      --append-system-prompt-file "$agent_notes" "${@:2}"
+  else
+    set -- claude --dangerously-skip-permissions "${@:2}"
   fi
 fi
 
