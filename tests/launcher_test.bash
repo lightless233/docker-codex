@@ -5,6 +5,13 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 # shellcheck source=tests/testlib.bash
 source "$ROOT/tests/testlib.bash"
 
+mount_source_for_target() {
+  local log=$1 target=$2 line
+  line=$(grep -F "target=$target>" "$log" | head -n 1)
+  line=${line#*source=}
+  printf '%s\n' "${line%%,target=*}"
+}
+
 test_canonical_and_compatibility_entrypoints_dispatch_agents() {
   local TEST_TMP
   TEST_TMP=$(new_tmp)
@@ -58,6 +65,116 @@ test_normal_checkout_preserves_paths_and_codex_arguments() {
     "<review>" \
     "<prompt with spaces>"
   assert_no_line "<type=bind,source=$repo/.git,target=$repo/.git>" "$TEST_DOCKER_LOG"
+}
+
+test_non_git_directory_launches_codex_and_claude() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local workspace="$TEST_TMP/plain workspace"
+  mkdir -p "$workspace"
+  printf 'plain\n' >"$workspace/notes.txt"
+  prepare_fake_runtime "$TEST_TMP"
+
+  run_named_launcher "$workspace" "$ROOT" docker-codex -- status
+
+  assert_line "<type=bind,source=$workspace,target=$workspace>" \
+    "$TEST_DOCKER_LOG"
+  assert_line "<$workspace>" "$TEST_DOCKER_LOG"
+  assert_line "<codex>" "$TEST_DOCKER_LOG"
+  assert_line "<status>" "$TEST_DOCKER_LOG"
+  assert_not_contains "source=$workspace/.git" "$TEST_DOCKER_LOG"
+
+  : >"$TEST_DOCKER_LOG"
+  run_named_launcher "$workspace" "$ROOT" docker-claude \
+    --official-subscription -- --version
+
+  assert_line "<type=bind,source=$workspace,target=$workspace>" \
+    "$TEST_DOCKER_LOG"
+  assert_line "<$workspace>" "$TEST_DOCKER_LOG"
+  assert_line "<claude>" "$TEST_DOCKER_LOG"
+  assert_line "<--version>" "$TEST_DOCKER_LOG"
+  assert_not_contains "source=$workspace/.git" "$TEST_DOCKER_LOG"
+}
+
+test_git_init_preserves_non_git_cache_and_claude_state_identity() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local workspace="$TEST_TMP/future repo"
+  local cache_before cache_after state_before state_after
+  mkdir -p "$workspace"
+  printf 'seed\n' >"$workspace/seed.txt"
+  prepare_fake_runtime "$TEST_TMP"
+
+  run_named_launcher "$workspace" "$ROOT" docker-codex -- status
+  cache_before=$(mount_source_for_target "$TEST_DOCKER_LOG" /codex-cache)
+
+  : >"$TEST_DOCKER_LOG"
+  run_named_launcher "$workspace" "$ROOT" docker-claude \
+    --official-subscription -- --version
+  state_before=$(mount_source_for_target "$TEST_DOCKER_LOG" /claude-state)
+
+  git init -q "$workspace"
+  git -C "$workspace" config user.name Test
+  git -C "$workspace" config user.email test@example.invalid
+  git -C "$workspace" add seed.txt
+  git -C "$workspace" commit -qm seed
+
+  : >"$TEST_DOCKER_LOG"
+  run_named_launcher "$workspace" "$ROOT" docker-codex -- status
+  cache_after=$(mount_source_for_target "$TEST_DOCKER_LOG" /codex-cache)
+
+  : >"$TEST_DOCKER_LOG"
+  run_named_launcher "$workspace" "$ROOT" docker-claude \
+    --official-subscription -- --version
+  state_after=$(mount_source_for_target "$TEST_DOCKER_LOG" /claude-state)
+
+  [[ $cache_before == "$cache_after" ]] ||
+    fail "git init changed cache identity: $cache_before -> $cache_after"
+  [[ $state_before == "$state_after" ]] ||
+    fail "git init changed Claude state identity: $state_before -> $state_after"
+}
+
+test_same_named_non_git_directories_are_isolated() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local workspace_a="$TEST_TMP/a/test"
+  local workspace_b="$TEST_TMP/b/test"
+  local cache_a cache_b state_a state_b
+  mkdir -p "$workspace_a" "$workspace_b"
+  prepare_fake_runtime "$TEST_TMP"
+
+  run_named_launcher "$workspace_a" "$ROOT" docker-claude \
+    --official-subscription -- --version
+  cache_a=$(mount_source_for_target "$TEST_DOCKER_LOG" /codex-cache)
+  state_a=$(mount_source_for_target "$TEST_DOCKER_LOG" /claude-state)
+
+  : >"$TEST_DOCKER_LOG"
+  run_named_launcher "$workspace_b" "$ROOT" docker-claude \
+    --official-subscription -- --version
+  cache_b=$(mount_source_for_target "$TEST_DOCKER_LOG" /codex-cache)
+  state_b=$(mount_source_for_target "$TEST_DOCKER_LOG" /claude-state)
+
+  [[ $cache_a != "$cache_b" ]] ||
+    fail "same-named non-Git directories shared a cache"
+  [[ $state_a != "$state_b" ]] ||
+    fail "same-named non-Git directories shared Claude state"
+}
+
+test_non_git_directory_rejects_isolated_worktree_mode() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local workspace="$TEST_TMP/plain"
+  local errors="$TEST_TMP/errors"
+  mkdir -p "$workspace"
+  prepare_fake_runtime "$TEST_TMP"
+
+  if run_named_launcher "$workspace" "$ROOT" docker-codex \
+    --isolated feature -- status >"$errors" 2>&1; then
+    fail "non-Git directory unexpectedly accepted --isolated"
+  fi
+
+  assert_contains "--isolated requires a Git checkout" "$errors"
+  assert_no_line "<run>" "$TEST_DOCKER_LOG"
 }
 
 test_installed_launcher_runs_without_source_checkout() {
@@ -505,6 +622,10 @@ test_help_documents_agent_and_claude_interfaces() {
 init_tests
 test_canonical_and_compatibility_entrypoints_dispatch_agents
 test_normal_checkout_preserves_paths_and_codex_arguments
+test_non_git_directory_launches_codex_and_claude
+test_git_init_preserves_non_git_cache_and_claude_state_identity
+test_same_named_non_git_directories_are_isolated
+test_non_git_directory_rejects_isolated_worktree_mode
 test_installed_launcher_runs_without_source_checkout
 test_installed_launcher_rejects_build_without_source_checkout
 test_linked_worktree_mounts_external_git_metadata_and_readonly_bind

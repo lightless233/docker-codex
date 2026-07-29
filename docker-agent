@@ -12,7 +12,7 @@ usage_agent() {
   cat <<'EOF'
 Usage: docker-agent {codex|claude} [options] [--] [agent args...]
 
-Run Codex or Claude Code in Docker against the current Git checkout.
+Run Codex or Claude Code in Docker against the current project directory.
 
 Commands:
   docker-agent codex       Run Codex
@@ -27,12 +27,12 @@ usage_codex() {
 Usage: docker-codex [options] [--] [codex args...]
        docker-agent codex [options] [--] [codex args...]
 
-Run Codex in Docker against the current Git checkout.
+Run Codex in Docker against the current project directory.
 
 Options:
   --build                 Build the image before launching
   --image IMAGE           Image to use (default: docker-agent:local)
-  --isolated NAME         Create branch codex/NAME in a retained worktree
+  --isolated NAME         In Git, create branch codex/NAME in a retained worktree
   --bind PATH[:ro]        Bind an absolute directory at the same container path
                           (repeatable; append :ro for read-only)
   --pat TOKEN             Provide a git access token directly; stored under the
@@ -56,12 +56,12 @@ usage_claude() {
 Usage: docker-claude [options] [connection] [--] [claude args...]
        docker-agent claude [options] [connection] [--] [claude args...]
 
-Run Claude Code in Docker against the current Git checkout.
+Run Claude Code in Docker against the current project directory.
 
 Options:
   --build                   Build the image before launching
   --image IMAGE             Image to use (default: docker-agent:local)
-  --isolated NAME           Create branch codex/NAME in a retained worktree
+  --isolated NAME           In Git, create branch codex/NAME in a retained worktree
   --bind PATH[:ro]          Bind an absolute directory at the same container path
   --pat TOKEN               Provide a git access token directly
   --pat-path FILE           Mount a git access token file
@@ -656,6 +656,7 @@ CLAUDE_CREDENTIAL_PATH=
 CLAUDE_STATE_DIR=
 MENU_SELECTION=0
 AGENT_ARGS=()
+HAS_GIT=0
 
 if [[ ${1:-} == --create-profile ]]; then
   [[ $AGENT == claude ]] ||
@@ -752,9 +753,15 @@ if [[ -n $PAT_VALUE && -n $PAT_PATH ]]; then
 fi
 
 START_DIR=$(pwd -P)
-CHECKOUT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) ||
-  die "current directory is not inside a Git checkout"
-CHECKOUT_ROOT=$(cd "$CHECKOUT_ROOT" && pwd -P)
+if CHECKOUT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null); then
+  HAS_GIT=1
+  CHECKOUT_ROOT=$(cd "$CHECKOUT_ROOT" && pwd -P)
+else
+  CHECKOUT_ROOT=$START_DIR
+fi
+if [[ -n $ISOLATED ]] && ((HAS_GIT == 0)); then
+  die "--isolated requires a Git checkout"
+fi
 
 if [[ $AGENT == claude ]]; then
   if [[ -z $CLAUDE_CONNECTION ]]; then
@@ -788,10 +795,15 @@ if [[ $AGENT == claude ]]; then
   resolve_claude_credential_source
 fi
 
-COMMON_DIR=$(git rev-parse --path-format=absolute --git-common-dir)
-COMMON_DIR=$(cd "$COMMON_DIR" && pwd -P)
-GIT_DIR=$(git rev-parse --path-format=absolute --git-dir)
-GIT_DIR=$(cd "$GIT_DIR" && pwd -P)
+if ((HAS_GIT)); then
+  COMMON_DIR=$(git rev-parse --path-format=absolute --git-common-dir)
+  COMMON_DIR=$(cd "$COMMON_DIR" && pwd -P)
+  GIT_DIR=$(git rev-parse --path-format=absolute --git-dir)
+  GIT_DIR=$(cd "$GIT_DIR" && pwd -P)
+else
+  COMMON_DIR="$CHECKOUT_ROOT/.git"
+  GIT_DIR=
+fi
 
 if [[ -n $ISOLATED ]]; then
   create_isolated_worktree "$ISOLATED"
@@ -853,7 +865,10 @@ if [[ -n $PAT_PATH ]]; then
   # origin host without touching any config file shared with the host.
   # shellcheck disable=SC2016 # $(cat ...) must stay literal; git runs the helper.
   pat_helper='!f() { echo username=x-access-token; echo "password=$(cat /codex-credentials/pat)"; }; f'
-  origin_url=$(git remote get-url origin 2>/dev/null || true)
+  origin_url=
+  if ((HAS_GIT)); then
+    origin_url=$(git remote get-url origin 2>/dev/null || true)
+  fi
   origin_host=$(parse_origin_host "$origin_url" 2>/dev/null || true)
   if [[ -n $origin_host ]]; then
     DOCKER_ARGS+=(--env "GIT_CONFIG_COUNT=3")
@@ -870,12 +885,14 @@ if [[ -n $PAT_PATH ]]; then
   fi
 fi
 
-if ! path_is_within "$COMMON_DIR" "$CHECKOUT_ROOT"; then
-  append_same_path_mount "$COMMON_DIR"
-fi
-if ! path_is_within "$GIT_DIR" "$CHECKOUT_ROOT" &&
-  ! path_is_within "$GIT_DIR" "$COMMON_DIR"; then
-  append_same_path_mount "$GIT_DIR"
+if ((HAS_GIT)); then
+  if ! path_is_within "$COMMON_DIR" "$CHECKOUT_ROOT"; then
+    append_same_path_mount "$COMMON_DIR"
+  fi
+  if ! path_is_within "$GIT_DIR" "$CHECKOUT_ROOT" &&
+    ! path_is_within "$GIT_DIR" "$COMMON_DIR"; then
+    append_same_path_mount "$GIT_DIR"
+  fi
 fi
 for bind_spec in "${BIND_SPECS[@]}"; do
   bind_mode=rw

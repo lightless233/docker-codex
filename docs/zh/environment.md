@@ -36,13 +36,16 @@ Claude 进程单独使用 UTC 和 `en_US.UTF-8`，不会改变 Codex 或普通�
 
 ## 构建缓存
 
-每个 Git common directory 都会获得一个稳定的 Docker volume，名称类似：
+每个 Git common directory 或 plain project directory 都会获得一个稳定的
+Docker volume，名称类似：
 
 ```text
 docker-codex-cache-<git-path-hash>
 ```
 
-该 volume 挂载到 `/codex-cache`。Cargo 的 registry/git 下载缓存、pnpm
+plain directory 以 `<当前目录>/.git` 的合成绝对路径计算相同格式的 hash；
+以后在该目录执行 `git init` 不会改变 volume 名称。该 volume 挂载到
+`/codex-cache`。Cargo 的 registry/git 下载缓存、pnpm
 文件以及通用 XDG 缓存都保存在 Docker 的 Linux 文件系统中，并在同一仓库
 的所有 worktree 之间共享；Cargo 构建产物则按 worktree 隔离在
 `/codex-cache/cargo-targets/<worktree 名>-<路径哈希>` 下，避免

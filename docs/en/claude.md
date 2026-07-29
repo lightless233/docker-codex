@@ -159,7 +159,7 @@ Claude state is arranged as:
 
 ```text
 <data-root>/claude/repos/
-  <repo-name>-<Git-common-dir-path-hash>/
+  <repo-name>-<Git-common-dir-or-synthetic-.git-path-hash>/
     worktrees/
       <worktree-name>-<checkout-path-hash>/
         official-subscription/
@@ -170,9 +170,11 @@ Claude state is arranged as:
 
 Repository and worktree IDs include a 16-character Git object hash of the
 canonical absolute path, so `/home/test` and `/project/test` do not collide.
-Each repository, worktree, and connection has a separate `CLAUDE_CONFIG_DIR`;
-later containers using the same combination reuse it. Editing a profile
-without renaming it also reuses that state.
+A plain directory uses `<current-directory>/.git` as its synthetic common
+directory; a later `git init` in place therefore reuses the same state. Each
+repository, worktree, and connection has a separate `CLAUDE_CONFIG_DIR`; later
+containers using the same combination reuse it. Editing a profile without
+renaming it also reuses that state.
 
 Every state directory contains a mode-`0600` `.docker-agent-identity`. The
 launcher verifies its repository, checkout, and connection identity to reject

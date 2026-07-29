@@ -1,17 +1,25 @@
 # Checkout and worktree behavior
 
-This page explains how the launcher locates and mounts the current checkout,
+This page explains how the launcher locates and mounts the current project,
 and how the `--isolated` retained worktree and `--bind` extra directory
 mounts behave. Read it when you need to manage isolated worktrees or mount
 directories outside the checkout.
 
-By default, the launcher uses the checkout containing the current directory. It
-does not create a branch or worktree.
+By default, the launcher uses the checkout root when the current directory is
+in Git, and the current directory itself otherwise. Both are mounted at the
+same absolute container path, with the invocation directory as the workdir.
+Plain-directory mode neither creates nor mounts `.git`, and does not support
+`--isolated`.
 
-The checkout is mounted at the same absolute path in the container. When the
-checkout is a linked worktree or submodule whose Git metadata lives elsewhere,
+When the checkout is a linked worktree or submodule whose Git metadata lives elsewhere,
 the launcher discovers that metadata with Git and mounts only the required
 external Git directories, also at the same paths.
+
+A plain directory uses canonical absolute-path hashes to isolate state and
+caches, with `<current-directory>/.git` as its synthetic repository identity.
+Running `git init` later in that same directory produces the same real Git
+path, so the existing state and cache continue to be used. Same-named
+directories at different paths never collide.
 
 For example, a long-lived linked worktree can be used directly:
 
@@ -31,6 +39,8 @@ Create a new host worktree explicitly:
 ```bash
 docker-agent codex --isolated issue-123
 ```
+
+This option is only available in a Git checkout; a plain directory is rejected.
 
 This creates:
 

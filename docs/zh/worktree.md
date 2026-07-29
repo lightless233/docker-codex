@@ -1,16 +1,22 @@
 # Checkout 与 worktree
 
-本文说明启动器如何定位和挂载当前 checkout，以及 `--isolated` 隔离
+本文说明启动器如何定位和挂载当前项目目录，以及 `--isolated` 隔离
 worktree 和 `--bind` 额外目录挂载的行为。需要了解 worktree 的创建与
 清理方式，或需要把 checkout 之外的目录挂进容器时阅读本文。
 
-默认情况下，启动器直接使用当前目录所属的 checkout，不会创建分支或
-worktree。
+默认情况下，如果当前目录属于 Git checkout，启动器使用 checkout 根目录；
+否则直接使用当前目录。两种情况都挂载到容器内完全相同的绝对路径，并把
+调用位置设为容器 workdir。plain directory 模式不会创建或挂载 `.git`，
+也不支持 `--isolated`。
 
-checkout 会挂载到容器内完全相同的绝对路径。如果当前 checkout 是 linked
-worktree 或 submodule，并且 Git metadata 位于其他目录，启动器会通过 Git
-自动发现这些目录，只补充挂载必要的外部 Git metadata，并保持宿主机与
-容器内路径一致。
+如果当前 checkout 是 linked worktree 或 submodule，并且 Git metadata
+位于其他目录，启动器会通过 Git 自动发现这些目录，只补充挂载必要的外部
+Git metadata，并保持宿主机与容器内路径一致。
+
+plain directory 使用规范化绝对路径 hash 隔离状态和缓存，并以
+`<当前目录>/.git` 的合成路径计算 repo identity。以后在同一目录执行
+`git init` 时，真实 Git 路径与合成路径相同，因此继续复用原状态和缓存。
+不同位置的同名目录不会冲突。
 
 例如，可以直接使用一个长期存在的 linked worktree：
 
@@ -30,6 +36,8 @@ worktree。
 ```bash
 docker-agent codex --isolated issue-123
 ```
+
+该选项只适用于 Git checkout；在 plain directory 中会拒绝启动。
 
 该命令会创建：
 

@@ -38,13 +38,16 @@ See [Claude Code integration](claude.md) for the complete policy.
 
 ## Build caches
 
-Each Git common directory gets a stable Docker volume named like:
+Each Git common directory or plain project directory gets a stable Docker
+volume named like:
 
 ```text
 docker-codex-cache-<git-path-hash>
 ```
 
-The volume backs `/codex-cache`. Cargo registry/git download caches, pnpm
+A plain directory hashes the synthetic absolute path
+`<current-directory>/.git`, so running `git init` there later does not change
+the volume name. The volume backs `/codex-cache`. Cargo registry/git download caches, pnpm
 files, and general XDG caches stay inside Docker's Linux filesystem and are
 shared across all worktrees of one repository, while Cargo build artifacts
 are isolated per worktree under

@@ -2,9 +2,10 @@
 
 **简体中文** | [English](README.en.md)
 
-在同一个 Docker 镜像里运行 Codex CLI 或 Claude Code。容器挂载当前 Git
-checkout，agent 的修改直接落在宿主文件上；Git metadata、构建缓存、可选
-worktree 和剪贴板转发由统一启动器管理。原有 `docker-codex` 命令继续兼容。
+在同一个 Docker 镜像里运行 Codex CLI 或 Claude Code。容器挂载当前项目
+目录，agent 的修改直接落在宿主文件上；如果项目是 Git checkout，启动器
+还会管理 Git metadata、构建缓存、可选 worktree 和剪贴板转发。原有
+`docker-codex` 命令继续兼容。
 
 ## 快速开始
 
@@ -22,7 +23,7 @@ sudo ./install.sh
 # 交互创建自定义 endpoint profile
 docker-claude --create-profile
 
-# 在任意 Git checkout 中启动
+# 在任意项目目录中启动（无需 Git repository）
 cd /path/to/your-project
 docker-agent codex
 docker-agent claude
@@ -39,7 +40,7 @@ key、自定义 endpoint；选择自定义 endpoint 后再显示按名称排序�
 
 > [!WARNING]
 > Codex 默认使用 `--yolo`，Claude Code 默认使用
-> `--dangerously-skip-permissions`。当前 checkout、必要的 Git metadata 和
+> `--dangerously-skip-permissions`。当前项目目录、必要的 Git metadata 和
 > 显式凭证会按用途挂载给所选 agent；请只在信任的项目中使用。
 
 常用命令：
@@ -67,7 +68,7 @@ docker-agent codex --pat-path ~/.local/share/docker-agent/pat/github-x
     使用其他镜像，而不是默认的 docker-agent:local。
 
 --isolated NAME
-    创建并使用保留的 codex/NAME 分支及宿主 worktree。
+    在 Git checkout 中创建并使用保留的 codex/NAME 分支及宿主 worktree。
 
 --bind PATH[:ro]
     将绝对目录挂载到容器内相同路径；可重复，:ro 表示只读。

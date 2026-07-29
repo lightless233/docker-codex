@@ -3,9 +3,10 @@
 [简体中文](README.md) | **English**
 
 Run Codex CLI or Claude Code in one Docker image. The container mounts the
-current Git checkout, so agent edits land directly on host files. A unified
-launcher manages Git metadata, build caches, optional worktrees, and clipboard
-forwarding. The original `docker-codex` command remains compatible.
+current project directory, so agent edits land directly on host files. For a
+Git checkout, the unified launcher also manages Git metadata, build caches,
+optional worktrees, and clipboard forwarding. The original `docker-codex`
+command remains compatible.
 
 ## Quick start
 
@@ -23,7 +24,7 @@ sudo ./install.sh
 # Interactively create a custom-endpoint profile
 docker-claude --create-profile
 
-# Launch from any Git checkout
+# Launch from any project directory (no Git repository required)
 cd /path/to/your-project
 docker-agent codex
 docker-agent claude
@@ -42,7 +43,7 @@ and CI without a TTY must use one of the explicit connection selectors.
 > [!WARNING]
 > Codex runs with `--yolo`; Claude Code runs with
 > `--dangerously-skip-permissions`. The selected agent receives the current
-> checkout, required Git metadata, and explicitly selected credentials. Use
+> project directory, required Git metadata, and explicitly selected credentials. Use
 > this only with projects you trust.
 
 Common commands:
@@ -70,7 +71,7 @@ Shared options:
     Use another image instead of docker-agent:local.
 
 --isolated NAME
-    Create and use a retained codex/NAME branch and host worktree.
+    In a Git checkout, create and use a retained codex/NAME branch and worktree.
 
 --bind PATH[:ro]
     Mount an absolute directory at the same path; repeatable, :ro is read-only.

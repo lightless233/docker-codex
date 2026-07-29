@@ -153,7 +153,7 @@ Claude 状态树：
 
 ```text
 <data-root>/claude/repos/
-  <repo-name>-<Git-common-dir-path-hash>/
+  <repo-name>-<Git-common-dir-or-synthetic-.git-path-hash>/
     worktrees/
       <worktree-name>-<checkout-path-hash>/
         official-subscription/
@@ -163,9 +163,11 @@ Claude 状态树：
 ```
 
 repo 和 worktree ID 都包含规范化绝对路径的 16 位 Git object hash，所以
-`/home/test` 与 `/project/test` 不会因同名冲突。不同 repo、worktree 和
-连接方式拥有不同 `CLAUDE_CONFIG_DIR`；同一组合的后续容器会复用该状态。
-profile 内容变化但名称不变时也复用原状态。
+`/home/test` 与 `/project/test` 不会因同名冲突。plain directory 使用
+`<当前目录>/.git` 作为合成 common dir；以后在原目录执行 `git init` 仍会
+复用同一状态。不同 repo、worktree 和连接方式拥有不同
+`CLAUDE_CONFIG_DIR`；同一组合的后续容器会复用该状态。profile 内容变化但
+名称不变时也复用原状态。
 
 每个状态目录含权限为 `0600` 的 `.docker-agent-identity`，启动器会核对
 repo、checkout 和连接身份，防止路径碰撞或错误复用。
