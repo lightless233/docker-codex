@@ -44,7 +44,20 @@ profile 根目录是：
 ${DOCKER_AGENT_CONFIG_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/docker-agent}/claude/profiles
 ```
 
-推荐这样创建：
+推荐使用交互创建命令：
+
+```bash
+docker-claude --create-profile
+```
+
+该命令依次读取 profile 名称、API endpoint 和 API key。API key 输入显示为
+星号，支持粘贴与退格，不会显示明文；创建器将其写为
+`ANTHROPIC_AUTH_TOKEN`。该动作必须单独使用，但不要求当前目录是 Git
+checkout，也不要求 Docker daemon 正在运行。同名 profile 已存在时拒绝
+覆盖。
+
+创建完成后会输出 profile 的绝对路径和启动命令。如需添加模型映射等其他
+白名单环境变量，直接编辑输出的文件。也可以手动创建：
 
 ```bash
 profile_root="${XDG_CONFIG_HOME:-$HOME/.config}/docker-agent/claude/profiles"

@@ -45,7 +45,21 @@ The profile root is:
 ${DOCKER_AGENT_CONFIG_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/docker-agent}/claude/profiles
 ```
 
-Create a profile safely:
+The recommended interactive creator is:
+
+```bash
+docker-claude --create-profile
+```
+
+It prompts for the profile name, API endpoint, and API key. Key input is
+represented by asterisks, supports paste and backspace, and never displays the
+plaintext; the creator stores it as `ANTHROPIC_AUTH_TOKEN`. This action must be
+used alone, but it requires neither a Git checkout nor a running Docker daemon.
+It refuses to overwrite an existing profile.
+
+On success it prints the absolute profile path and launch command. Edit that
+file to add optional allowlisted fields such as model mappings. A profile can
+also be created manually:
 
 ```bash
 profile_root="${XDG_CONFIG_HOME:-$HOME/.config}/docker-agent/claude/profiles"

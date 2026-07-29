@@ -19,6 +19,9 @@ docker build -t docker-agent:local .
 # 安装 docker-agent、docker-codex 和 docker-claude
 sudo ./install.sh
 
+# 交互创建自定义 endpoint profile
+docker-claude --create-profile
+
 # 在任意 Git checkout 中启动
 cd /path/to/your-project
 docker-agent codex
@@ -43,6 +46,7 @@ key、自定义 endpoint；选择自定义 endpoint 后再显示按名称排序�
 
 ```bash
 docker-agent codex -- review "review the current branch"
+docker-agent claude --create-profile
 docker-agent claude --official-subscription
 docker-agent claude --official-api
 docker-agent claude --profile deepseek -- --version
@@ -83,9 +87,12 @@ docker-agent codex --pat-path ~/.local/share/docker-agent/pat/github-x
 
 `--` 后的参数不再由启动器解释，原样传给 Codex 或 Claude Code。
 
-Claude 连接参数互斥：
+Claude 连接与 profile 选项：
 
 ```text
+--create-profile
+    交互创建自定义 endpoint profile；必须单独使用。
+
 --official-subscription
     Linux/WSL：复用宿主 Claude Code 的 .credentials.json。
 

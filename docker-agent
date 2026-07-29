@@ -69,6 +69,7 @@ Options:
   --official-subscription   Reuse the supported host Claude OAuth credential
   --official-api            Use the official-api.env API key profile
   --profile NAME            Use a named custom endpoint profile
+  --create-profile          Interactively create a custom endpoint profile
   --help, -h                Show this help
 
 Without a connection selector, an interactive terminal shows a connection menu.
@@ -391,6 +392,117 @@ validate_claude_profile_name() {
     die "reserved Claude profile name: official-api"
 }
 
+read_masked_profile_value() {
+  local prompt=$1
+  local input_fd=0 output_fd=1
+  local character='' read_status=0 tty_state='' value=''
+
+  tty_state=$(stty -g <&"$input_fd") ||
+    die "unable to read terminal state"
+  trap 'stty "$tty_state" <&"$input_fd"' EXIT
+  trap 'exit 130' HUP INT TERM
+  stty -echo <&"$input_fd"
+  printf '%s' "$prompt" >&"$output_fd"
+
+  while :; do
+    character=
+    if ! IFS= read -r -n1 character <&"$input_fd"; then
+      read_status=130
+      break
+    fi
+    case $character in
+      '')
+        break
+        ;;
+      $'\003'|$'\033')
+        read_status=130
+        break
+        ;;
+      $'\010'|$'\177')
+        if [[ -n $value ]]; then
+          value=${value%?}
+          printf '\b \b' >&"$output_fd"
+        fi
+        ;;
+      *)
+        value+=$character
+        printf '*' >&"$output_fd"
+        ;;
+    esac
+  done
+
+  if [[ -n $tty_state ]]; then
+    stty "$tty_state" <&"$input_fd"
+    tty_state=
+    trap - HUP INT TERM EXIT
+  fi
+  printf '\n' >&"$output_fd"
+  ((read_status == 0)) || return "$read_status"
+  MASKED_PROFILE_VALUE=$value
+}
+
+create_claude_profile() {
+  local input_fd=0 output_fd=1
+  local config_root profile_dir profile_path
+  local profile_name endpoint api_key temp_file=
+
+  if [[ ! -t $input_fd || ! -t $output_fd ]]; then
+    die "--create-profile requires an interactive terminal"
+  fi
+
+  printf 'Profile 名称: ' >&"$output_fd"
+  IFS= read -r profile_name <&"$input_fd" ||
+    die "Profile name is required"
+  [[ -n $profile_name ]] || die "Profile name is required"
+  CLAUDE_PROFILE_NAME=$profile_name
+  CLAUDE_CONNECTION="profile:$CLAUDE_PROFILE_NAME"
+  validate_claude_profile_name
+
+  config_root=${DOCKER_AGENT_CONFIG_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/docker-agent}
+  install -d -m 700 "$config_root"
+  install -d -m 700 "$config_root/claude"
+  install -d -m 700 "$config_root/claude/profiles"
+  config_root=$(cd "$config_root" && pwd -P)
+  profile_dir="$config_root/claude/profiles"
+  profile_path="$profile_dir/$CLAUDE_PROFILE_NAME.env"
+  if [[ -e $profile_path || -L $profile_path ]]; then
+    die "Claude profile already exists: $profile_path"
+  fi
+
+  printf 'API endpoint: ' >&"$output_fd"
+  IFS= read -r endpoint <&"$input_fd" ||
+    die "API endpoint is required"
+  [[ -n $endpoint ]] || die "API endpoint is required"
+
+  MASKED_PROFILE_VALUE=
+  read_masked_profile_value "API key: " ||
+    return $?
+  api_key=$MASKED_PROFILE_VALUE
+  [[ -n $api_key ]] || die "API key is required"
+
+  temp_file=$(mktemp "$profile_dir/.docker-agent-profile.XXXXXX") ||
+    die "unable to create temporary profile"
+  chmod 600 "$temp_file"
+  trap '[[ -z ${temp_file:-} ]] || rm -f "$temp_file"' EXIT
+  trap 'exit 130' HUP INT TERM
+  printf '%s\n' \
+    "ANTHROPIC_BASE_URL=$endpoint" \
+    "ANTHROPIC_AUTH_TOKEN=$api_key" >"$temp_file"
+  if ! ln "$temp_file" "$profile_path" 2>/dev/null; then
+    die "Claude profile already exists: $profile_path"
+  fi
+  rm -f "$temp_file"
+  temp_file=
+  trap - EXIT HUP INT TERM
+
+  validate_claude_profile "$profile_path" custom
+  printf 'Profile 已创建：%s\n' "$profile_path" >&"$output_fd"
+  printf '启动：docker-claude --profile %s\n' \
+    "$CLAUDE_PROFILE_NAME" >&"$output_fd"
+  printf '如需配置模型等其他环境变量，请编辑该文件：%s\n' \
+    "$profile_path" >&"$output_fd"
+}
+
 resolve_claude_connection() {
   local expected_profile profile_dir
 
@@ -545,6 +657,14 @@ CLAUDE_STATE_DIR=
 MENU_SELECTION=0
 AGENT_ARGS=()
 
+if [[ ${1:-} == --create-profile ]]; then
+  [[ $AGENT == claude ]] ||
+    die "--create-profile is only valid for Claude"
+  (($# == 1)) || die "--create-profile must be used alone"
+  create_claude_profile
+  exit 0
+fi
+
 while (($#)); do
   case $1 in
     --build)
@@ -595,6 +715,9 @@ while (($#)); do
       CLAUDE_PROFILE_NAME=$2
       CLAUDE_CONNECTION="profile:$CLAUDE_PROFILE_NAME"
       shift 2
+      ;;
+    --create-profile)
+      die "--create-profile must be used alone"
       ;;
     --)
       shift

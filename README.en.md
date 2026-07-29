@@ -20,6 +20,9 @@ docker build -t docker-agent:local .
 # Install docker-agent, docker-codex, and docker-claude
 sudo ./install.sh
 
+# Interactively create a custom-endpoint profile
+docker-claude --create-profile
+
 # Launch from any Git checkout
 cd /path/to/your-project
 docker-agent codex
@@ -46,6 +49,7 @@ Common commands:
 
 ```bash
 docker-agent codex -- review "review the current branch"
+docker-agent claude --create-profile
 docker-agent claude --official-subscription
 docker-agent claude --official-api
 docker-agent claude --profile deepseek -- --version
@@ -86,9 +90,12 @@ Shared options:
 
 Arguments after `--` are passed unchanged to Codex or Claude Code.
 
-Claude connection selectors are mutually exclusive:
+Claude connection and profile options:
 
 ```text
+--create-profile
+    Interactively create a custom-endpoint profile; must be used alone.
+
 --official-subscription
     On Linux/WSL, reuse the host Claude Code .credentials.json.
 

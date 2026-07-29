@@ -36,11 +36,242 @@ run_claude_menu() {
   )
 }
 
+wait_for_profile_output() {
+  local output=$1 expected=$2 done_file=$3
+  local attempt
+  for ((attempt = 0; attempt < 500; attempt++)); do
+    grep -Fq -- "$expected" "$output" 2>/dev/null && return 0
+    [[ ! -e $done_file ]] || return 1
+    sleep 0.01
+  done
+  fail "timed out waiting for profile creator output: $expected"
+}
+
+run_profile_creator() {
+  local directory=$1 input=$2 output=$3
+  local fifo="$directory/profile-input.fifo"
+  local done_file="$directory/profile-done"
+  local line pid result
+
+  command -v script >/dev/null 2>&1 ||
+    fail "script is required for profile creator PTY tests"
+  mkfifo "$fifo"
+  exec 7<>"$fifo"
+  # shellcheck disable=SC2016 # Variables expand in script's child shell.
+  DOCKER_AGENT_CONFIG_HOME="$TEST_AGENT_CONFIG_HOME" \
+    DOCKER_AGENT_DOCKER_BIN="$directory/does-not-exist-docker" \
+    DOCKER_AGENT_TEST_LAUNCHER="$ROOT/docker-claude" \
+    DOCKER_AGENT_TEST_DONE_FILE="$done_file" \
+    script -qfec \
+      '"$DOCKER_AGENT_TEST_LAUNCHER" --create-profile; result=$?; printf "%s\n" "$result" >"$DOCKER_AGENT_TEST_DONE_FILE"; exit "$result"' \
+      /dev/null <&7 >"$output" 2>&1 &
+  pid=$!
+
+  exec 9<"$input"
+  if wait_for_profile_output "$output" "Profile 名称:" "$done_file"; then
+    IFS= read -r line <&9 || line=
+    printf '%s\n' "$line" >&7
+  fi
+  if wait_for_profile_output "$output" "API endpoint:" "$done_file"; then
+    IFS= read -r line <&9 || line=
+    printf '%s\n' "$line" >&7
+  fi
+  if wait_for_profile_output "$output" "API key:" "$done_file"; then
+    IFS= read -r line <&9 || line=
+    printf '%s\n' "$line" >&7
+  fi
+  exec 9<&-
+  exec 7>&-
+
+  if wait "$pid"; then
+    result=0
+  else
+    result=$?
+  fi
+  rm -f "$fifo" "$done_file"
+  return "$result"
+}
+
+test_file_mode() {
+  if stat -c %a "$1" >/dev/null 2>&1; then
+    stat -c %a "$1"
+  else
+    stat -f %Lp "$1"
+  fi
+}
+
 state_mount_source() {
   local log=$1 line
   line=$(grep -F 'target=/claude-state>' "$log")
   line=${line#<type=bind,source=}
   printf '%s\n' "${line%,target=/claude-state>}"
+}
+
+test_profile_creator_masks_key_and_writes_protected_profile_outside_git() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local outside="$TEST_TMP/not a repository"
+  local input="$TEST_TMP/input"
+  local output="$TEST_TMP/output"
+  local profile
+  mkdir -p "$outside"
+  prepare_fake_runtime "$TEST_TMP"
+  profile="$TEST_AGENT_CONFIG_HOME/claude/profiles/deepseek.env"
+  printf '%s\n' \
+    'deepseek' \
+    'https://api.deepseek.com/anthropic' \
+    'secret-key' >"$input"
+
+  run_profile_creator "$outside" "$input" "$output"
+
+  assert_line 'ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic' \
+    "$profile"
+  assert_line 'ANTHROPIC_AUTH_TOKEN=secret-key' "$profile"
+  [[ $(wc -l <"$profile") == 2 ]] ||
+    fail "created profile contains unexpected lines"
+  [[ $(test_file_mode "$TEST_AGENT_CONFIG_HOME/claude/profiles") == 700 ]] ||
+    fail "profile directory does not have mode 700"
+  [[ $(test_file_mode "$profile") == 600 ]] ||
+    fail "created profile does not have mode 600"
+  assert_contains 'API key: **********' "$output"
+  assert_not_contains 'secret-key' "$output"
+  assert_contains "Profile 已创建：$profile" "$output"
+  assert_contains 'docker-claude --profile deepseek' "$output"
+  assert_contains "如需配置模型等其他环境变量，请编辑该文件" "$output"
+}
+
+test_profile_creator_backspace_removes_masked_character_and_secret_character() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local outside="$TEST_TMP/outside"
+  local input="$TEST_TMP/input"
+  local output="$TEST_TMP/output"
+  local profile
+  mkdir -p "$outside"
+  prepare_fake_runtime "$TEST_TMP"
+  profile="$TEST_AGENT_CONFIG_HOME/claude/profiles/editing.env"
+  printf 'editing\nhttps://example.invalid/anthropic\nrightX\177\n' >"$input"
+
+  run_profile_creator "$outside" "$input" "$output"
+
+  assert_line 'ANTHROPIC_AUTH_TOKEN=right' "$profile"
+  assert_contains $'API key: ******\b \b' "$output"
+  assert_not_contains 'rightX' "$profile"
+}
+
+test_profile_creator_refuses_existing_profile_without_modifying_it() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local outside="$TEST_TMP/outside"
+  local input="$TEST_TMP/input"
+  local output="$TEST_TMP/output"
+  local profile expected
+  mkdir -p "$outside"
+  prepare_fake_runtime "$TEST_TMP"
+  profile="$TEST_AGENT_CONFIG_HOME/claude/profiles/deepseek.env"
+  expected="$TEST_TMP/expected"
+  printf '%s\n' \
+    'ANTHROPIC_BASE_URL=https://existing.example.invalid/anthropic' \
+    'ANTHROPIC_AUTH_TOKEN=existing-secret' >"$profile"
+  chmod 600 "$profile"
+  cp "$profile" "$expected"
+  printf 'deepseek\n' >"$input"
+
+  if run_profile_creator "$outside" "$input" "$output"; then
+    fail "profile creator unexpectedly overwrote an existing profile"
+  fi
+
+  assert_contains "Claude profile already exists: $profile" "$output"
+  cmp -s "$expected" "$profile" ||
+    fail "existing profile content was modified"
+  assert_not_contains 'API endpoint:' "$output"
+}
+
+test_profile_creator_requires_name_endpoint_key_and_interactive_terminal() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local outside="$TEST_TMP/outside"
+  local input="$TEST_TMP/input"
+  local output="$TEST_TMP/output"
+  local errors="$TEST_TMP/errors"
+  mkdir -p "$outside"
+  prepare_fake_runtime "$TEST_TMP"
+
+  printf '\n' >"$input"
+  if run_profile_creator "$outside" "$input" "$output"; then
+    fail "empty profile name unexpectedly succeeded"
+  fi
+  assert_contains "Profile name is required" "$output"
+
+  printf 'missing-endpoint\n\n' >"$input"
+  if run_profile_creator "$outside" "$input" "$output"; then
+    fail "empty endpoint unexpectedly succeeded"
+  fi
+  assert_contains "API endpoint is required" "$output"
+
+  printf 'missing-key\nhttps://example.invalid/anthropic\n\n' >"$input"
+  if run_profile_creator "$outside" "$input" "$output"; then
+    fail "empty API key unexpectedly succeeded"
+  fi
+  assert_contains "API key is required" "$output"
+
+  if (
+    cd "$outside"
+    DOCKER_AGENT_CONFIG_HOME="$TEST_AGENT_CONFIG_HOME" \
+      "$ROOT/docker-claude" --create-profile </dev/null
+  ) >"$errors" 2>&1; then
+    fail "non-interactive profile creation unexpectedly succeeded"
+  fi
+  assert_contains "interactive terminal" "$errors"
+
+  printf '%s\n' \
+    'bypass' \
+    'https://example.invalid/anthropic' \
+    'bypass-secret' >"$input"
+  if (
+    cd "$outside"
+    exec 9<"$input"
+    exec 8>"$output"
+    DOCKER_AGENT_CONFIG_HOME="$TEST_AGENT_CONFIG_HOME" \
+      DOCKER_AGENT_TEST_FORCE_TTY=1 \
+      DOCKER_AGENT_PROFILE_INPUT_FD=9 \
+      DOCKER_AGENT_PROFILE_OUTPUT_FD=8 \
+      "$ROOT/docker-claude" --create-profile
+  ) >"$errors" 2>&1; then
+    fail "profile test variables unexpectedly bypassed the TTY requirement"
+  fi
+  assert_contains "interactive terminal" "$errors"
+  [[ ! -e $TEST_AGENT_CONFIG_HOME/claude/profiles/bypass.env ]] ||
+    fail "TTY bypass created a profile"
+}
+
+test_profile_creator_is_standalone_claude_action() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local outside="$TEST_TMP/outside"
+  local input="$TEST_TMP/input"
+  local output="$TEST_TMP/output"
+  local help="$TEST_TMP/help"
+  mkdir -p "$outside"
+  prepare_fake_runtime "$TEST_TMP"
+  printf '%s\n' \
+    'deepseek' \
+    'https://api.deepseek.com/anthropic' \
+    'secret-key' >"$input"
+
+  if "$ROOT/docker-claude" --create-profile --profile deepseek \
+    >"$output" 2>&1; then
+    fail "--create-profile unexpectedly accepted launch options"
+  fi
+  assert_contains "--create-profile must be used alone" "$output"
+
+  "$ROOT/docker-claude" --help >"$help"
+  assert_contains "--create-profile" "$help"
+
+  if "$ROOT/docker-codex" --create-profile >"$output" 2>&1; then
+    fail "Codex unexpectedly accepted --create-profile"
+  fi
+  assert_contains "--create-profile is only valid for Claude" "$output"
 }
 
 test_official_api_profile_is_mounted_without_secret_in_docker_args() {
@@ -640,6 +871,11 @@ test_noninteractive_launch_requires_explicit_connection() {
 }
 
 init_tests
+test_profile_creator_masks_key_and_writes_protected_profile_outside_git
+test_profile_creator_backspace_removes_masked_character_and_secret_character
+test_profile_creator_refuses_existing_profile_without_modifying_it
+test_profile_creator_requires_name_endpoint_key_and_interactive_terminal
+test_profile_creator_is_standalone_claude_action
 test_official_api_profile_is_mounted_without_secret_in_docker_args
 test_custom_profile_validates_endpoint_and_single_credential
 test_profile_parser_rejects_unknown_duplicate_and_invalid_values
