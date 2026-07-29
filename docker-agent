@@ -107,6 +107,31 @@ path_is_within() {
   [[ $child == "$parent" || $child == "$parent/"* ]]
 }
 
+file_uid() {
+  if stat -c %u "$1" >/dev/null 2>&1; then
+    stat -c %u "$1"
+  else
+    stat -f %u "$1"
+  fi
+}
+
+file_mode() {
+  if stat -c %a "$1" >/dev/null 2>&1; then
+    stat -c %a "$1"
+  else
+    stat -f %Lp "$1"
+  fi
+}
+
+array_contains() {
+  local needle=$1 item
+  shift
+  for item in "$@"; do
+    [[ $item == "$needle" ]] && return 0
+  done
+  return 1
+}
+
 reject_mount_comma() {
   [[ $1 != *,* ]] ||
     die "Docker --mount paths containing commas are unsupported: $1"
@@ -193,6 +218,111 @@ select_claude_connection() {
   CLAUDE_CONNECTION=${selected#--}
 }
 
+validate_claude_profile() {
+  local file=$1 kind=$2
+  local line key value
+  local seen_keys=()
+  local has_base=0 has_auth_token=0 has_api_key=0
+
+  [[ -e $file ]] || die "Claude profile does not exist: $file"
+  [[ ! -L $file ]] || die "Claude profile must not be a symlink: $file"
+  [[ -f $file ]] || die "Claude profile must be a regular file: $file"
+  [[ $(file_uid "$file") == "$(id -u)" ]] ||
+    die "Claude profile must be owned by the current user: $file"
+  [[ $(file_mode "$file") == 600 ]] ||
+    die "Claude profile must have mode 600: $file"
+
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ $line =~ ^[[:space:]]*$ ]] && continue
+    [[ $line =~ ^[[:space:]]*# ]] && continue
+    [[ $line == *=* ]] || die "invalid Claude profile assignment"
+    key=${line%%=*}
+    value=${line#*=}
+    [[ $key =~ ^[A-Z][A-Z0-9_]*$ ]] ||
+      die "invalid Claude profile key: $key"
+    array_contains "$key" "${seen_keys[@]}" &&
+      die "duplicate Claude profile key: $key"
+    seen_keys+=("$key")
+
+    case $key in
+      ANTHROPIC_BASE_URL)
+        [[ -n $value ]] || die "empty ANTHROPIC_BASE_URL"
+        has_base=1
+        ;;
+      ANTHROPIC_AUTH_TOKEN)
+        [[ -n $value ]] || die "empty ANTHROPIC_AUTH_TOKEN"
+        has_auth_token=1
+        ;;
+      ANTHROPIC_API_KEY)
+        [[ -n $value ]] || die "empty ANTHROPIC_API_KEY"
+        has_api_key=1
+        ;;
+      ANTHROPIC_MODEL|ANTHROPIC_DEFAULT_OPUS_MODEL|ANTHROPIC_DEFAULT_SONNET_MODEL|ANTHROPIC_DEFAULT_HAIKU_MODEL|CLAUDE_CODE_SUBAGENT_MODEL)
+        ;;
+      CLAUDE_CODE_EFFORT_LEVEL)
+        [[ $value =~ ^(low|medium|high|xhigh|max|auto)$ ]] ||
+          die "invalid CLAUDE_CODE_EFFORT_LEVEL"
+        ;;
+      *)
+        die "unsupported Claude profile key: $key"
+        ;;
+    esac
+  done <"$file"
+
+  if [[ $kind == official-api ]]; then
+    ((has_api_key == 1 && has_auth_token == 0 && has_base == 0)) ||
+      die "official API profile requires only ANTHROPIC_API_KEY"
+  else
+    ((has_base == 1 && has_auth_token + has_api_key == 1)) ||
+      die "custom profile requires endpoint and exactly one credential"
+  fi
+}
+
+validate_claude_profile_name() {
+  [[ $CLAUDE_PROFILE_NAME =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
+    die "invalid Claude profile name: $CLAUDE_PROFILE_NAME"
+  [[ $CLAUDE_PROFILE_NAME != official-api ||
+      $CLAUDE_CONNECTION == official-api ]] ||
+    die "reserved Claude profile name: official-api"
+}
+
+resolve_claude_connection() {
+  local expected_profile profile_dir
+
+  [[ $CLAUDE_CONNECTION == official-subscription ]] && return 0
+
+  CONFIG_ROOT=${DOCKER_AGENT_CONFIG_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/docker-agent}
+  install -d -m 700 "$CONFIG_ROOT/claude/profiles"
+  CONFIG_ROOT=$(cd "$CONFIG_ROOT" && pwd -P)
+  path_is_within "$CONFIG_ROOT" "$CHECKOUT_ROOT" &&
+    die "docker-agent config home must not be inside the checkout"
+
+  case $CLAUDE_CONNECTION in
+    official-api)
+      expected_profile="$CONFIG_ROOT/claude/profiles/official-api.env"
+      ;;
+    profile:*)
+      expected_profile="$CONFIG_ROOT/claude/profiles/$CLAUDE_PROFILE_NAME.env"
+      ;;
+    *)
+      die "unsupported Claude connection: $CLAUDE_CONNECTION"
+      ;;
+  esac
+
+  profile_dir=$(cd "$(dirname "$expected_profile")" && pwd -P)
+  CLAUDE_PROFILE_PATH="$profile_dir/$(basename "$expected_profile")"
+  path_is_within "$CLAUDE_PROFILE_PATH" "$CONFIG_ROOT" ||
+    die "Claude profile resolves outside docker-agent config home"
+  path_is_within "$CLAUDE_PROFILE_PATH" "$CHECKOUT_ROOT" &&
+    die "Claude profile must not be inside the checkout"
+
+  if [[ $CLAUDE_CONNECTION == official-api ]]; then
+    validate_claude_profile "$CLAUDE_PROFILE_PATH" official-api
+  else
+    validate_claude_profile "$CLAUDE_PROFILE_PATH" custom
+  fi
+}
+
 DOCKER_BIN=${DOCKER_AGENT_DOCKER_BIN:-${DOCKER_CODEX_DOCKER_BIN:-docker}}
 IMAGE=${DOCKER_AGENT_IMAGE:-${DOCKER_CODEX_IMAGE:-docker-agent:local}}
 HOST_OS=${DOCKER_AGENT_HOST_OS:-${DOCKER_CODEX_HOST_OS:-$(uname -s)}}
@@ -206,6 +336,8 @@ BIND_SPECS=()
 PAT_VALUE=
 PAT_PATH=${DOCKER_AGENT_PAT_PATH:-${DOCKER_CODEX_PAT_PATH:-}}
 CLAUDE_CONNECTION=
+CLAUDE_PROFILE_NAME=
+CLAUDE_PROFILE_PATH=
 AGENT_ARGS=()
 
 while (($#)); do
@@ -247,6 +379,18 @@ while (($#)); do
       select_claude_connection "$1"
       shift
       ;;
+    --official-api)
+      select_claude_connection "$1"
+      CLAUDE_PROFILE_NAME=official-api
+      shift
+      ;;
+    --profile)
+      (($# >= 2)) || die "--profile requires a name"
+      select_claude_connection "$1"
+      CLAUDE_PROFILE_NAME=$2
+      CLAUDE_CONNECTION="profile:$CLAUDE_PROFILE_NAME"
+      shift 2
+      ;;
     --)
       shift
       AGENT_ARGS=("$@")
@@ -266,6 +410,14 @@ while (($#)); do
   esac
 done
 
+if [[ $AGENT == claude ]]; then
+  [[ -n $CLAUDE_CONNECTION ]] ||
+    die "Claude connection requires --official-subscription, --official-api, or --profile NAME"
+  if [[ -n $CLAUDE_PROFILE_NAME ]]; then
+    validate_claude_profile_name
+  fi
+fi
+
 command -v git >/dev/null 2>&1 || die "git is required"
 command -v "$DOCKER_BIN" >/dev/null 2>&1 || die "docker is required"
 
@@ -277,6 +429,10 @@ START_DIR=$(pwd -P)
 CHECKOUT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) ||
   die "current directory is not inside a Git checkout"
 CHECKOUT_ROOT=$(cd "$CHECKOUT_ROOT" && pwd -P)
+
+if [[ $AGENT == claude ]]; then
+  resolve_claude_connection
+fi
 
 COMMON_DIR=$(git rev-parse --path-format=absolute --git-common-dir)
 COMMON_DIR=$(cd "$COMMON_DIR" && pwd -P)
@@ -306,6 +462,13 @@ if [[ $AGENT == codex ]]; then
   reject_mount_comma "$CODEX_HOME_SOURCE"
   DOCKER_ARGS+=(--env "CODEX_HOME=/codex-home")
   DOCKER_ARGS+=(--mount "type=bind,source=$CODEX_HOME_SOURCE,target=/codex-home")
+else
+  if [[ -n $CLAUDE_PROFILE_PATH ]]; then
+    reject_mount_comma "$CLAUDE_PROFILE_PATH"
+    DOCKER_ARGS+=(--mount "type=bind,source=$CLAUDE_PROFILE_PATH,target=/run/docker-agent/claude-profile.env,readonly")
+    DOCKER_ARGS+=(--env "DOCKER_AGENT_CLAUDE_PROFILE_FILE=/run/docker-agent/claude-profile.env")
+  fi
+  DOCKER_ARGS+=(--env "DOCKER_AGENT_CLAUDE_CONNECTION=$CLAUDE_CONNECTION")
 fi
 DOCKER_ARGS+=(--mount "type=volume,source=docker-codex-cache-$REPO_ID,target=/codex-cache")
 

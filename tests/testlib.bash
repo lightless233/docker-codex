@@ -27,6 +27,13 @@ assert_contains() {
     fail "missing text <$expected> in $file"
 }
 
+assert_not_contains() {
+  local unexpected=$1 file=$2
+  if grep -Fq -- "$unexpected" "$file"; then
+    fail "unexpected text <$unexpected> in $file"
+  fi
+}
+
 assert_ordered_lines() {
   local file=$1
   shift
@@ -80,19 +87,27 @@ EOF
 prepare_fake_runtime() {
   local base=$1
   TEST_CODEX_HOME="$base/codex home"
+  TEST_AGENT_CONFIG_HOME="$base/agent config"
+  TEST_AGENT_DATA_HOME="$base/agent data"
   TEST_DOCKER="$base/docker"
   TEST_DOCKER_LOG="$base/docker.log"
   mkdir -p "$TEST_CODEX_HOME"
+  install -d -m 700 "$TEST_AGENT_CONFIG_HOME/claude/profiles"
+  install -d -m 700 "$TEST_AGENT_DATA_HOME"
   : >"$TEST_DOCKER_LOG"
   make_fake_docker "$TEST_DOCKER"
 }
 
 run_named_launcher() {
   local directory=$1 project_root=$2 launcher_name=$3
+  local agent_config_home=${DOCKER_AGENT_CONFIG_HOME:-$TEST_AGENT_CONFIG_HOME}
+  local agent_data_home=${DOCKER_AGENT_DATA_HOME:-}
   shift 3
   (
     cd "$directory"
     CODEX_HOME="$TEST_CODEX_HOME" \
+      DOCKER_AGENT_CONFIG_HOME="$agent_config_home" \
+      DOCKER_AGENT_DATA_HOME="$agent_data_home" \
       DOCKER_AGENT_DOCKER_BIN="$TEST_DOCKER" \
       DOCKER_AGENT_TEST_DOCKER_LOG="$TEST_DOCKER_LOG" \
       "$project_root/$launcher_name" "$@"
