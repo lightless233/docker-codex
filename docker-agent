@@ -1,0 +1,431 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROGRAM_NAME=$(basename "$0")
+
+die() {
+  printf '%s: %s\n' "$PROGRAM_NAME" "$*" >&2
+  exit 1
+}
+
+usage_agent() {
+  cat <<'EOF'
+Usage: docker-agent {codex|claude} [options] [--] [agent args...]
+
+Run Codex or Claude Code in Docker against the current Git checkout.
+
+Agents:
+  codex                    Run Codex
+  claude                   Run Claude Code
+
+Use "docker-agent AGENT --help" for agent-specific options.
+EOF
+}
+
+usage_codex() {
+  cat <<'EOF'
+Usage: docker-codex [options] [--] [codex args...]
+       docker-agent codex [options] [--] [codex args...]
+
+Run Codex in Docker against the current Git checkout.
+
+Options:
+  --build                 Build the image before launching
+  --image IMAGE           Image to use (default: docker-agent:local)
+  --isolated NAME         Create branch codex/NAME in a retained worktree
+  --bind PATH[:ro]        Bind an absolute directory at the same container path
+                          (repeatable; append :ro for read-only)
+  --pat TOKEN             Provide a git access token directly; stored under the
+                          data home with mode 600 and mounted read-only at
+                          /codex-credentials/pat (visible in shell history;
+                          prefer --pat-path)
+  --pat-path FILE         Mount a token file read-only at
+                          /codex-credentials/pat (DOCKER_CODEX_PAT_PATH sets
+                          the default)
+  --disable-clipboard     Do not forward the host clipboard (display sockets)
+                          into the container
+  --help, -h              Show this help
+
+Arguments after -- are passed to Codex without reinterpretation.
+Isolated worktrees and their branches are retained after the container exits.
+EOF
+}
+
+usage_claude() {
+  cat <<'EOF'
+Usage: docker-claude [options] --official-subscription [--] [claude args...]
+       docker-agent claude [options] --official-subscription [--] [claude args...]
+
+Run Claude Code in Docker against the current Git checkout.
+
+Options:
+  --build                   Build the image before launching
+  --image IMAGE             Image to use (default: docker-agent:local)
+  --isolated NAME           Create branch codex/NAME in a retained worktree
+  --bind PATH[:ro]          Bind an absolute directory at the same container path
+  --pat TOKEN               Provide a git access token directly
+  --pat-path FILE           Mount a git access token file
+  --disable-clipboard       Do not forward host display sockets
+  --official-subscription   Reuse the supported host Claude OAuth credential
+  --help, -h                Show this help
+
+Arguments after -- are passed to Claude Code without reinterpretation.
+Isolated worktrees and their branches are retained after the container exits.
+EOF
+}
+
+case $PROGRAM_NAME in
+  docker-codex)
+    AGENT=codex
+    ;;
+  docker-claude)
+    AGENT=claude
+    ;;
+  docker-agent)
+    case ${1:-} in
+      -h|--help)
+        usage_agent
+        exit 0
+        ;;
+    esac
+    (($# >= 1)) || die "expected agent: codex or claude"
+    AGENT=$1
+    shift
+    [[ $AGENT == codex || $AGENT == claude ]] ||
+      die "unsupported agent: $AGENT"
+    ;;
+  *)
+    die "unsupported launcher name: $PROGRAM_NAME"
+    ;;
+esac
+
+path_is_within() {
+  local child=$1 parent=$2
+  if [[ $parent == / ]]; then
+    return 0
+  fi
+  [[ $child == "$parent" || $child == "$parent/"* ]]
+}
+
+reject_mount_comma() {
+  [[ $1 != *,* ]] ||
+    die "Docker --mount paths containing commas are unsupported: $1"
+}
+
+append_same_path_mount() {
+  local path=$1 mode=${2:-rw}
+  [[ -e $path ]] || die "bind source does not exist: $path"
+  [[ -d $path ]] || die "bind source must be a directory: $path"
+  path=$(cd "$path" && pwd -P)
+  reject_mount_comma "$path"
+  if [[ $mode == ro ]]; then
+    DOCKER_ARGS+=(--mount "type=bind,source=$path,target=$path,readonly")
+  else
+    DOCKER_ARGS+=(--mount "type=bind,source=$path,target=$path")
+  fi
+}
+
+repo_id_for() {
+  printf '%s' "$1" | git hash-object --stdin | cut -c1-16
+}
+
+parse_origin_host() {
+  local url=$1
+  case $url in
+    git@*:*)
+      url=${url#git@}
+      printf '%s\n' "${url%%:*}"
+      ;;
+    ssh://*)
+      url=${url#ssh://}
+      url=${url#*@}
+      printf '%s\n' "${url%%/*}"
+      ;;
+    http://*|https://*)
+      url=${url#*://}
+      printf '%s\n' "${url%%/*}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+validate_isolated_name() {
+  local name=$1
+  [[ $name =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
+    die "invalid isolated worktree name: $name"
+  git check-ref-format --branch "codex/$name" >/dev/null 2>&1 ||
+    die "invalid isolated worktree name: $name"
+}
+
+create_isolated_worktree() {
+  local name=$1 current_branch repo_id target branch
+  validate_isolated_name "$name"
+  current_branch=$(git branch --show-current)
+  [[ -n $current_branch ]] ||
+    die "--isolated requires the current checkout to be on a branch"
+
+  mkdir -p "$DATA_HOME/worktrees"
+  DATA_HOME=$(cd "$DATA_HOME" && pwd -P)
+  repo_id=$(repo_id_for "$COMMON_DIR")
+  target="$DATA_HOME/worktrees/$repo_id/$name"
+  branch="codex/$name"
+
+  [[ ! -e $target ]] ||
+    die "isolated worktree path already exists: $target"
+  if git show-ref --verify --quiet "refs/heads/$branch"; then
+    die "isolated worktree branch already exists: $branch"
+  fi
+
+  mkdir -p "$(dirname "$target")"
+  git worktree add -b "$branch" "$target" HEAD
+  CHECKOUT_ROOT=$(cd "$target" && pwd -P)
+  START_DIR=$CHECKOUT_ROOT
+}
+
+select_claude_connection() {
+  local selected=$1
+  [[ $AGENT == claude ]] ||
+    die "$selected is only valid for Claude"
+  [[ -z $CLAUDE_CONNECTION ]] ||
+    die "Claude connection selectors are mutually exclusive"
+  CLAUDE_CONNECTION=${selected#--}
+}
+
+DOCKER_BIN=${DOCKER_AGENT_DOCKER_BIN:-${DOCKER_CODEX_DOCKER_BIN:-docker}}
+IMAGE=${DOCKER_AGENT_IMAGE:-${DOCKER_CODEX_IMAGE:-docker-agent:local}}
+HOST_OS=${DOCKER_AGENT_HOST_OS:-${DOCKER_CODEX_HOST_OS:-$(uname -s)}}
+DATA_HOME=${DOCKER_AGENT_DATA_HOME:-${DOCKER_CODEX_DATA_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/docker-agent}}
+WAYLAND_DIR_OVERRIDE=${DOCKER_AGENT_WAYLAND_DIR:-${DOCKER_CODEX_WAYLAND_DIR:-}}
+X11_DIR_OVERRIDE=${DOCKER_AGENT_X11_DIR:-${DOCKER_CODEX_X11_DIR:-}}
+BUILD=0
+ISOLATED=
+CLIPBOARD=1
+BIND_SPECS=()
+PAT_VALUE=
+PAT_PATH=${DOCKER_AGENT_PAT_PATH:-${DOCKER_CODEX_PAT_PATH:-}}
+CLAUDE_CONNECTION=
+AGENT_ARGS=()
+
+while (($#)); do
+  case $1 in
+    --build)
+      BUILD=1
+      shift
+      ;;
+    --image)
+      (($# >= 2)) || die "--image requires a value"
+      IMAGE=$2
+      shift 2
+      ;;
+    --isolated)
+      (($# >= 2)) || die "--isolated requires a name"
+      ISOLATED=$2
+      shift 2
+      ;;
+    --bind)
+      (($# >= 2)) || die "--bind requires a path"
+      BIND_SPECS+=("$2")
+      shift 2
+      ;;
+    --pat)
+      (($# >= 2)) || die "--pat requires a value"
+      PAT_VALUE=$2
+      shift 2
+      ;;
+    --pat-path)
+      (($# >= 2)) || die "--pat-path requires a file"
+      PAT_PATH=$2
+      shift 2
+      ;;
+    --disable-clipboard)
+      CLIPBOARD=0
+      shift
+      ;;
+    --official-subscription)
+      select_claude_connection "$1"
+      shift
+      ;;
+    --)
+      shift
+      AGENT_ARGS=("$@")
+      break
+      ;;
+    --help|-h)
+      if [[ $AGENT == codex ]]; then
+        usage_codex
+      else
+        usage_claude
+      fi
+      exit 0
+      ;;
+    *)
+      die "unknown option: $1"
+      ;;
+  esac
+done
+
+command -v git >/dev/null 2>&1 || die "git is required"
+command -v "$DOCKER_BIN" >/dev/null 2>&1 || die "docker is required"
+
+if [[ -n $PAT_VALUE && -n $PAT_PATH ]]; then
+  die "--pat and --pat-path are mutually exclusive"
+fi
+
+START_DIR=$(pwd -P)
+CHECKOUT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) ||
+  die "current directory is not inside a Git checkout"
+CHECKOUT_ROOT=$(cd "$CHECKOUT_ROOT" && pwd -P)
+
+COMMON_DIR=$(git rev-parse --path-format=absolute --git-common-dir)
+COMMON_DIR=$(cd "$COMMON_DIR" && pwd -P)
+GIT_DIR=$(git rev-parse --path-format=absolute --git-dir)
+GIT_DIR=$(cd "$GIT_DIR" && pwd -P)
+
+if [[ -n $ISOLATED ]]; then
+  create_isolated_worktree "$ISOLATED"
+  COMMON_DIR=$(git -C "$CHECKOUT_ROOT" rev-parse --path-format=absolute --git-common-dir)
+  COMMON_DIR=$(cd "$COMMON_DIR" && pwd -P)
+  GIT_DIR=$(git -C "$CHECKOUT_ROOT" rev-parse --path-format=absolute --git-dir)
+  GIT_DIR=$(cd "$GIT_DIR" && pwd -P)
+fi
+REPO_ID=$(repo_id_for "$COMMON_DIR")
+
+DOCKER_ARGS=(run --rm)
+if [[ -t 0 && -t 1 ]]; then
+  DOCKER_ARGS+=(-it)
+fi
+DOCKER_ARGS+=(--env "HOST_UID=$(id -u)" --env "HOST_GID=$(id -g)")
+append_same_path_mount "$CHECKOUT_ROOT"
+if [[ $AGENT == codex ]]; then
+  CODEX_HOME_SOURCE=${CODEX_HOME:-$HOME/.codex}
+  [[ -d $CODEX_HOME_SOURCE ]] ||
+    die "Codex home does not exist: $CODEX_HOME_SOURCE"
+  CODEX_HOME_SOURCE=$(cd "$CODEX_HOME_SOURCE" && pwd -P)
+  reject_mount_comma "$CODEX_HOME_SOURCE"
+  DOCKER_ARGS+=(--env "CODEX_HOME=/codex-home")
+  DOCKER_ARGS+=(--mount "type=bind,source=$CODEX_HOME_SOURCE,target=/codex-home")
+fi
+DOCKER_ARGS+=(--mount "type=volume,source=docker-codex-cache-$REPO_ID,target=/codex-cache")
+
+if [[ -n $PAT_VALUE ]]; then
+  install -d -m 700 "$DATA_HOME/pat"
+  PAT_PATH=$DATA_HOME/pat/$REPO_ID
+  (umask 077; printf '%s\n' "$PAT_VALUE" >"$PAT_PATH")
+  chmod 600 "$PAT_PATH"
+fi
+if [[ -n $PAT_PATH ]]; then
+  [[ -e $PAT_PATH ]] || die "PAT file does not exist: $PAT_PATH"
+  [[ -f $PAT_PATH ]] || die "PAT path must be a regular file: $PAT_PATH"
+  PAT_PATH=$(cd "$(dirname "$PAT_PATH")" && pwd -P)/$(basename "$PAT_PATH")
+  reject_mount_comma "$PAT_PATH"
+  DOCKER_ARGS+=(--mount "type=bind,source=$PAT_PATH,target=/codex-credentials/pat,readonly")
+  # Git reads GIT_CONFIG_KEY_n/VALUE_n as extra config entries, so the
+  # container gets a credential helper and an SSH-to-HTTPS rewrite for the
+  # origin host without touching any config file shared with the host.
+  # shellcheck disable=SC2016 # $(cat ...) must stay literal; git runs the helper.
+  pat_helper='!f() { echo username=x-access-token; echo "password=$(cat /codex-credentials/pat)"; }; f'
+  origin_url=$(git remote get-url origin 2>/dev/null || true)
+  origin_host=$(parse_origin_host "$origin_url" 2>/dev/null || true)
+  if [[ -n $origin_host ]]; then
+    DOCKER_ARGS+=(--env "GIT_CONFIG_COUNT=3")
+    DOCKER_ARGS+=(--env "GIT_CONFIG_KEY_0=credential.https://$origin_host.helper")
+    DOCKER_ARGS+=(--env "GIT_CONFIG_VALUE_0=$pat_helper")
+    DOCKER_ARGS+=(--env "GIT_CONFIG_KEY_1=url.https://$origin_host/.insteadOf")
+    DOCKER_ARGS+=(--env "GIT_CONFIG_VALUE_1=git@$origin_host:")
+    DOCKER_ARGS+=(--env "GIT_CONFIG_KEY_2=url.https://$origin_host/.insteadOf")
+    DOCKER_ARGS+=(--env "GIT_CONFIG_VALUE_2=ssh://git@$origin_host/")
+  else
+    DOCKER_ARGS+=(--env "GIT_CONFIG_COUNT=1")
+    DOCKER_ARGS+=(--env "GIT_CONFIG_KEY_0=credential.helper")
+    DOCKER_ARGS+=(--env "GIT_CONFIG_VALUE_0=$pat_helper")
+  fi
+fi
+
+if ! path_is_within "$COMMON_DIR" "$CHECKOUT_ROOT"; then
+  append_same_path_mount "$COMMON_DIR"
+fi
+if ! path_is_within "$GIT_DIR" "$CHECKOUT_ROOT" &&
+  ! path_is_within "$GIT_DIR" "$COMMON_DIR"; then
+  append_same_path_mount "$GIT_DIR"
+fi
+for bind_spec in "${BIND_SPECS[@]}"; do
+  bind_mode=rw
+  bind_path=$bind_spec
+  if [[ $bind_spec == *:ro ]]; then
+    bind_mode=ro
+    bind_path=${bind_spec%:ro}
+  fi
+  [[ $bind_path == /* ]] ||
+    die "--bind requires an absolute path: $bind_path"
+  append_same_path_mount "$bind_path" "$bind_mode"
+done
+
+DOCKER_ARGS+=(--workdir "$START_DIR")
+if [[ $HOST_OS == Linux ]]; then
+  DOCKER_ARGS+=(--add-host "host.docker.internal:host-gateway")
+elif [[ $HOST_OS != Darwin ]]; then
+  die "unsupported host OS: $HOST_OS"
+fi
+
+# Clipboard image paste is forwarded by default; --disable-clipboard opts
+# out. On WSLg only the Wayland socket is needed: the powershell.exe shim
+# reads images through wl-paste, and Codex's first X11 attempt fails fast
+# into that fallback. Native Linux reads the clipboard through the X11
+# socket directly. Sockets are mounted as single read-only file binds.
+if ((CLIPBOARD)); then
+  if [[ -n ${WSL_DISTRO_NAME:-} ]]; then
+    DOCKER_ARGS+=(--env "WSL_DISTRO_NAME=$WSL_DISTRO_NAME")
+    wayland_dir=${WAYLAND_DIR_OVERRIDE:-/mnt/wslg/runtime-dir}
+  else
+    wayland_dir=${WAYLAND_DIR_OVERRIDE:-${XDG_RUNTIME_DIR:-}}
+  fi
+  if [[ -n ${WAYLAND_DISPLAY:-} && -n $wayland_dir &&
+        -e $wayland_dir/$WAYLAND_DISPLAY ]]; then
+    reject_mount_comma "$wayland_dir"
+    DOCKER_ARGS+=(--mount "type=bind,source=$wayland_dir/$WAYLAND_DISPLAY,target=/run/docker-codex/$WAYLAND_DISPLAY,readonly")
+    DOCKER_ARGS+=(--env "WAYLAND_DISPLAY=$WAYLAND_DISPLAY")
+    DOCKER_ARGS+=(--env "XDG_RUNTIME_DIR=/run/docker-codex")
+  fi
+  if [[ -z ${WSL_DISTRO_NAME:-} && -n ${DISPLAY:-} ]]; then
+    x11_dir=${X11_DIR_OVERRIDE:-/tmp/.X11-unix}
+    x11_num=${DISPLAY%%.*}
+    x11_num=${x11_num#*:}
+    x11_socket=$x11_dir/X$x11_num
+    if [[ -e $x11_socket ]]; then
+      reject_mount_comma "$x11_socket"
+      DOCKER_ARGS+=(--mount "type=bind,source=$x11_socket,target=$x11_socket,readonly")
+      DOCKER_ARGS+=(--env "DISPLAY=$DISPLAY")
+      if [[ -n ${XAUTHORITY:-} && -f $XAUTHORITY ]]; then
+        reject_mount_comma "$XAUTHORITY"
+        DOCKER_ARGS+=(--mount "type=bind,source=$XAUTHORITY,target=$XAUTHORITY,readonly")
+        DOCKER_ARGS+=(--env "XAUTHORITY=$XAUTHORITY")
+      fi
+    fi
+  fi
+fi
+
+"$DOCKER_BIN" info >/dev/null 2>&1 ||
+  die "Docker daemon is unavailable"
+
+if ((BUILD)); then
+  SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+  [[ -f $SCRIPT_DIR/Dockerfile && -f $SCRIPT_DIR/container-entrypoint ]] ||
+    die "--build requires the docker-agent source checkout; run the repository copy"
+  "$DOCKER_BIN" build --tag "$IMAGE" "$SCRIPT_DIR"
+else
+  "$DOCKER_BIN" image inspect "$IMAGE" >/dev/null 2>&1 ||
+    die "image not found: $IMAGE (run with --build)"
+fi
+
+case $AGENT in
+  codex)
+    FINAL_ARGS=(codex --yolo --disable apps "${AGENT_ARGS[@]}")
+    ;;
+  claude)
+    FINAL_ARGS=(claude "${AGENT_ARGS[@]}")
+    ;;
+esac
+
+exec "$DOCKER_BIN" "${DOCKER_ARGS[@]}" "$IMAGE" "${FINAL_ARGS[@]}"

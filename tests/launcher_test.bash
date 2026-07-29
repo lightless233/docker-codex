@@ -5,6 +5,35 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 # shellcheck source=tests/testlib.bash
 source "$ROOT/tests/testlib.bash"
 
+test_canonical_and_compatibility_entrypoints_dispatch_agents() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+
+  run_named_launcher "$repo" "$ROOT" docker-agent codex -- --version
+  assert_ordered_lines "$TEST_DOCKER_LOG" \
+    "<codex>" "<--yolo>" "<--disable>" "<apps>" "<--version>"
+
+  : >"$TEST_DOCKER_LOG"
+  run_named_launcher "$repo" "$ROOT" docker-codex -- --version
+  assert_ordered_lines "$TEST_DOCKER_LOG" \
+    "<codex>" "<--yolo>" "<--disable>" "<apps>" "<--version>"
+
+  : >"$TEST_DOCKER_LOG"
+  run_named_launcher "$repo" "$ROOT" docker-agent \
+    claude --official-subscription -- --version
+  assert_ordered_lines "$TEST_DOCKER_LOG" \
+    "<claude>" "<--version>"
+
+  : >"$TEST_DOCKER_LOG"
+  run_named_launcher "$repo" "$ROOT" docker-claude \
+    --official-subscription -- --version
+  assert_ordered_lines "$TEST_DOCKER_LOG" \
+    "<claude>" "<--version>"
+}
+
 test_normal_checkout_preserves_paths_and_codex_arguments() {
   local TEST_TMP
   TEST_TMP=$(new_tmp)
@@ -76,7 +105,7 @@ test_installed_launcher_rejects_build_without_source_checkout() {
     fail "installed launcher unexpectedly built without source files"
   fi
 
-  assert_contains "--build requires the docker-codex source checkout" "$errors"
+  assert_contains "--build requires the docker-agent source checkout" "$errors"
   assert_no_line "<build>" "$TEST_DOCKER_LOG"
 }
 
@@ -134,6 +163,19 @@ test_darwin_does_not_add_linux_host_gateway() {
     export DOCKER_CODEX_HOST_OS=Darwin
     run_launcher "$repo" "$ROOT" -- status
   )
+
+  assert_no_line "<host.docker.internal:host-gateway>" "$TEST_DOCKER_LOG"
+}
+
+test_neutral_host_os_override_does_not_add_linux_host_gateway() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+
+  DOCKER_AGENT_HOST_OS=Darwin \
+    run_launcher "$repo" "$ROOT" -- status
 
   assert_no_line "<host.docker.internal:host-gateway>" "$TEST_DOCKER_LOG"
 }
@@ -281,6 +323,37 @@ test_pat_value_is_stored_under_data_home_and_never_passed_as_argument() {
   assert_line "<GIT_CONFIG_KEY_0=credential.helper>" "$TEST_DOCKER_LOG"
 }
 
+test_neutral_data_home_and_pat_path_overrides_are_used() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  local data_home="$TEST_TMP/agent data"
+  local pat_file="$TEST_TMP/pat/token"
+  local common_dir repo_id stored
+  make_repo "$repo"
+  mkdir -p "$(dirname "$pat_file")"
+  printf 'token-from-file\n' >"$pat_file"
+  common_dir=$(cd "$repo/.git" && pwd -P)
+  repo_id=$(printf '%s' "$common_dir" | git hash-object --stdin | cut -c1-16)
+  stored="$data_home/pat/$repo_id"
+  prepare_fake_runtime "$TEST_TMP"
+
+  DOCKER_AGENT_DATA_HOME=$data_home \
+    run_launcher "$repo" "$ROOT" --pat token-neutral -- status
+
+  [[ -f $stored ]] ||
+    fail "neutral data home did not contain stored PAT: $stored"
+  assert_line "<type=bind,source=$stored,target=/codex-credentials/pat,readonly>" \
+    "$TEST_DOCKER_LOG"
+
+  : >"$TEST_DOCKER_LOG"
+  DOCKER_AGENT_PAT_PATH=$pat_file \
+    run_launcher "$repo" "$ROOT" -- status
+
+  assert_line "<type=bind,source=$pat_file,target=/codex-credentials/pat,readonly>" \
+    "$TEST_DOCKER_LOG"
+}
+
 test_pat_options_reject_invalid_input() {
   local TEST_TMP
   TEST_TMP=$(new_tmp)
@@ -324,7 +397,7 @@ test_display_sockets_are_forwarded_when_present() {
   prepare_fake_runtime "$TEST_TMP"
 
   DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 WSL_DISTRO_NAME=Ubuntu \
-  DOCKER_CODEX_WAYLAND_DIR=$wayland_dir \
+  DOCKER_AGENT_WAYLAND_DIR=$wayland_dir \
     run_launcher "$repo" "$ROOT" -- status
 
   assert_line "<type=bind,source=$wayland_dir/wayland-0,target=/run/docker-codex/wayland-0,readonly>" "$TEST_DOCKER_LOG"
@@ -346,7 +419,7 @@ test_native_linux_x11_socket_is_forwarded_readonly() {
   prepare_fake_runtime "$TEST_TMP"
 
   DISPLAY=:0 WAYLAND_DISPLAY='' WSL_DISTRO_NAME='' \
-  DOCKER_CODEX_X11_DIR=$x11_dir \
+  DOCKER_AGENT_X11_DIR=$x11_dir \
     run_launcher "$repo" "$ROOT" -- status
 
   assert_line "<type=bind,source=$x11_dir/X0,target=$x11_dir/X0,readonly>" "$TEST_DOCKER_LOG"
@@ -407,23 +480,26 @@ test_help_documents_public_interface_and_retained_worktrees() {
   assert_contains "--pat-path FILE" "$output"
   assert_contains "--disable-clipboard" "$output"
   assert_contains "--help" "$output"
-  assert_contains "docker-codex:local" "$output"
+  assert_contains "docker-agent:local" "$output"
   assert_contains "retained" "$output"
 }
 
 init_tests
+test_canonical_and_compatibility_entrypoints_dispatch_agents
 test_normal_checkout_preserves_paths_and_codex_arguments
 test_installed_launcher_runs_without_source_checkout
 test_installed_launcher_rejects_build_without_source_checkout
 test_linked_worktree_mounts_external_git_metadata_and_readonly_bind
 test_submodule_mounts_external_git_metadata
 test_darwin_does_not_add_linux_host_gateway
+test_neutral_host_os_override_does_not_add_linux_host_gateway
 test_bad_bind_paths_fail_before_docker_run
 test_isolated_mode_creates_and_preserves_worktree
 test_isolated_mode_rejects_unsafe_names
 test_isolated_mode_rejects_detached_head
 test_pat_path_mounts_file_and_injects_git_credential_config
 test_pat_value_is_stored_under_data_home_and_never_passed_as_argument
+test_neutral_data_home_and_pat_path_overrides_are_used
 test_pat_options_reject_invalid_input
 test_display_sockets_are_forwarded_when_present
 test_native_linux_x11_socket_is_forwarded_readonly

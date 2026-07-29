@@ -66,7 +66,7 @@ make_fake_docker() {
   cat >"$path" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-log=${DOCKER_CODEX_TEST_DOCKER_LOG:?}
+log=${DOCKER_AGENT_TEST_DOCKER_LOG:-${DOCKER_CODEX_TEST_DOCKER_LOG:?}}
 printf 'CALL\n' >>"$log"
 printf '<%s>\n' "$@" >>"$log"
 case ${1:-} in
@@ -87,14 +87,20 @@ prepare_fake_runtime() {
   make_fake_docker "$TEST_DOCKER"
 }
 
-run_launcher() {
-  local directory=$1 project_root=$2
-  shift 2
+run_named_launcher() {
+  local directory=$1 project_root=$2 launcher_name=$3
+  shift 3
   (
     cd "$directory"
     CODEX_HOME="$TEST_CODEX_HOME" \
-      DOCKER_CODEX_DOCKER_BIN="$TEST_DOCKER" \
-      DOCKER_CODEX_TEST_DOCKER_LOG="$TEST_DOCKER_LOG" \
-      "$project_root/docker-codex" "$@"
+      DOCKER_AGENT_DOCKER_BIN="$TEST_DOCKER" \
+      DOCKER_AGENT_TEST_DOCKER_LOG="$TEST_DOCKER_LOG" \
+      "$project_root/$launcher_name" "$@"
   )
+}
+
+run_launcher() {
+  local directory=$1 project_root=$2
+  shift 2
+  run_named_launcher "$directory" "$project_root" docker-codex "$@"
 }
