@@ -484,6 +484,24 @@ test_help_documents_public_interface_and_retained_worktrees() {
   assert_contains "retained" "$output"
 }
 
+test_help_documents_agent_and_claude_interfaces() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local agent_help="$TEST_TMP/agent-help"
+  local claude_help="$TEST_TMP/claude-help"
+
+  "$ROOT/docker-agent" --help >"$agent_help"
+  "$ROOT/docker-agent" claude --help >"$claude_help"
+
+  assert_contains "docker-agent codex" "$agent_help"
+  assert_contains "docker-agent claude" "$agent_help"
+  assert_contains "--official-subscription" "$claude_help"
+  assert_contains "--official-api" "$claude_help"
+  assert_contains "--profile NAME" "$claude_help"
+  assert_contains "docker-agent:local" "$claude_help"
+  assert_contains "interactive terminal" "$claude_help"
+}
+
 init_tests
 test_canonical_and_compatibility_entrypoints_dispatch_agents
 test_normal_checkout_preserves_paths_and_codex_arguments
@@ -506,4 +524,5 @@ test_native_linux_x11_socket_is_forwarded_readonly
 test_display_sockets_are_not_forwarded_when_absent
 test_disable_clipboard_skips_all_display_forwarding
 test_help_documents_public_interface_and_retained_worktrees
+test_help_documents_agent_and_claude_interfaces
 printf 'launcher tests: PASS\n'

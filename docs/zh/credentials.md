@@ -1,8 +1,7 @@
-# Codex 配置、认证与 Git 推送凭证
+# Agent 配置、认证与 Git 推送凭证
 
-本文说明宿主 Codex home 如何与容器共享、认证信息的操作系统边界，以及
-如何显式地向容器提供 Git 推送凭证。配置认证或需要从容器内 `git push`
-时阅读本文。
+本文说明 Codex 与 Claude Code 的认证边界，以及如何显式地向容器提供 Git
+推送凭证。配置认证或需要从容器内 `git push` 时阅读本文。
 
 ## Codex 配置、记忆与认证
 
@@ -38,6 +37,17 @@ Codex 进程相同。升级状态格式时，建议让镜像内 Codex CLI 与宿
 配置中的 STDIO MCP 命令和本地工具也必须已经安装在镜像中，或者显式挂载到
 容器内。
 
+## Claude Code 认证与状态
+
+Claude 不挂载完整 `~/.claude`。Linux/WSL 的官方订阅模式只把宿主
+`${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json` 作为单个读写文件
+挂到每个 repo/worktree/连接独立的 state 中；API key 和自定义 endpoint
+则来自 checkout 外、权限为 `0600` 的 profile。macOS Keychain 不能被
+Linux 容器复用。
+
+profile 格式、连接参数、状态路径和清理方法见
+[Claude Code 集成](claude.md)。
+
 ## 向容器提供 Git 推送凭证
 
 容器默认没有任何 Git 凭证，推送会失败。启动器提供两种显式 opt-in
@@ -49,14 +59,15 @@ credential helper 和 origin host 的 SSH→HTTPS `insteadOf` 重写。这些
 推荐把 token 保存在 checkout 之外的专用文件中：
 
 ```bash
-install -d -m 700 ~/.local/share/docker-codex/pat
-$EDITOR ~/.local/share/docker-codex/pat/github-<repo>   # 只写 token 一行
-chmod 600 ~/.local/share/docker-codex/pat/github-<repo>
+install -d -m 700 ~/.local/share/docker-agent/pat
+$EDITOR ~/.local/share/docker-agent/pat/github-<repo>   # 只写 token 一行
+chmod 600 ~/.local/share/docker-agent/pat/github-<repo>
 
-docker-codex --pat-path ~/.local/share/docker-codex/pat/github-<repo>
+docker-agent codex --pat-path ~/.local/share/docker-agent/pat/github-<repo>
 ```
 
-可以用 `DOCKER_CODEX_PAT_PATH` 设置默认路径，避免每次输入。
+可以用 `DOCKER_AGENT_PAT_PATH` 设置默认路径，避免每次输入；旧的
+`DOCKER_CODEX_PAT_PATH` 仍作为兼容 fallback。
 
 `--pat TOKEN` 直接在命令行传入 token：启动器会把它写入 data home 下的
 `pat/<repo-id>`（目录 700、文件 600），再走相同的挂载逻辑。注意 token

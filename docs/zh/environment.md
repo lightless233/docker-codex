@@ -10,8 +10,9 @@
 linux-x64 或 linux-arm64 压缩包安装，并使用该版本发布目录中的
 `SHASUMS256.txt` 校验。镜像还包含 pnpm、Rust stable（含 rustfmt 与
 clippy）、Codex CLI、Git、Python 3（pip 与 venv）、常用本地编译依赖，
-以及适合 agent 开发使用的 shell 工具。镜像在 `/etc/profile.d` 中保留
-Cargo 与 pnpm 的 PATH 条目，login shell 不会丢失工具链。镜像默认通过
+Claude Code、Codex CLI，以及适合 agent 开发使用的 shell 工具。镜像生成
+`en_US.UTF-8` locale，并在 `/etc/profile.d` 中保留 Cargo 与 pnpm 的 PATH
+条目，login shell 不会丢失工具链。镜像默认通过
 `RUSTFLAGS` 使用 mold 链接器加速构建（项目自身的 rustflags 或
 `docker run -e RUSTFLAGS=...` 可覆盖）；如需跨 worktree 复用依赖编译
 结果，可显式启用 sccache：
@@ -22,12 +23,16 @@ RUSTC_WRAPPER=sccache SCCACHE_DIR=/codex-cache/sccache cargo build
 
 ## 容器内 agent 的环境说明
 
-镜像内置 `/usr/local/share/docker-codex/agent-notes.md`，记录容器环境
+镜像内置 `/usr/local/share/docker-agent/agent-notes.md`，记录容器环境
 的关键事实：推送凭证是否已配置、默认使用 mold 链接器、sccache 的
-opt-in 用法、`CARGO_TARGET_DIR` 的位置等。entrypoint 在启动 `codex`
-时自动通过 `-c user_instructions=...` 注入，容器内的 Codex 无需口头
-交代即可了解环境；调用方在 `--` 之后传入的 `-c` 覆盖优先级更高。该
-文件随镜像版本化，调整工具链时应同步更新。
+opt-in 用法、`CARGO_TARGET_DIR` 的位置等。entrypoint 在启动 Codex 时用
+`-c user_instructions=...` 注入，启动 Claude 时用
+`--append-system-prompt-file` 注入。文件不包含回答语言、人格、endpoint
+或模型指令。调用方在 `--` 之后传入的 Codex `-c` 覆盖优先级更高。
+
+Claude 进程单独使用 UTC 和 `en_US.UTF-8`，不会改变 Codex 或普通容器命令
+的环境，也不会强制 Claude 使用英文回答。完整策略见
+[Claude Code 集成](claude.md)。
 
 ## 构建缓存
 

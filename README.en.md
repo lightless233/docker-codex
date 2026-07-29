@@ -1,84 +1,116 @@
-# docker-codex
+# docker-agent
 
 [简体中文](README.md) | **English**
 
-A launcher script that runs Codex CLI inside a Docker container. The container mounts your current Git checkout, so Codex edits your actual files on the host; `~/.codex` is shared, so your login and config carry over. The rest of your system stays out of reach, which makes `--yolo` a reasonable default.
+Run Codex CLI or Claude Code in one Docker image. The container mounts the
+current Git checkout, so agent edits land directly on host files. A unified
+launcher manages Git metadata, build caches, optional worktrees, and clipboard
+forwarding. The original `docker-codex` command remains compatible.
 
 ## Quick start
 
-Prerequisites: Git, Bash 3.2+, a running Docker daemon, and an existing `~/.codex` on the host (you get one by using Codex CLI locally).
+Prerequisites are Git, Bash 3.2+, and a running Docker daemon. Codex requires
+`${CODEX_HOME:-$HOME/.codex}` on the host. Reusing a Claude subscription
+requires a completed Claude Code login on a Linux or WSL host.
 
 ```bash
-# build the image, once
-cd /absolute/path/to/docker-codex
-./docker-codex --build -- --version
+# Build the shared image once, from this source checkout
+docker build -t docker-agent:local .
 
-# install the launcher
-sudo install -m 0755 ./docker-codex /usr/local/bin/docker-codex
+# The same script dispatches by its installed name
+sudo install -m 0755 ./docker-agent /usr/local/bin/docker-agent
+sudo install -m 0755 ./docker-agent /usr/local/bin/docker-codex
+sudo install -m 0755 ./docker-agent /usr/local/bin/docker-claude
 
-# cd into any project and go
+# Launch from any Git checkout
 cd /path/to/your-project
-docker-codex
+docker-agent codex
+docker-agent claude
+docker-agent claude --profile deepseek
 ```
 
-After that it's the same Codex you already know, just containerized.
+`docker-codex` is equivalent to `docker-agent codex`, and `docker-claude` is
+equivalent to `docker-agent claude`. Without `sudo`, install the same three
+names under `$HOME/.local/bin`.
 
-No `sudo`? Install into the user directory instead: `install -m 0755 ./docker-codex "$HOME/.local/bin/docker-codex"` (and put `~/.local/bin` on your `PATH`). Rebuilding the image has to happen from this repository via `./docker-codex --build`; rerun `install` whenever the launcher script changes.
-
-Runs on Linux, WSL2, and macOS via Docker Desktop (including Apple Silicon).
+In an interactive terminal, `docker-agent claude` shows connection choices for
+an official subscription/OAuth login, an official API key, or a custom
+endpoint. The custom choice opens a second, name-sorted profile menu. Scripts
+and CI without a TTY must use one of the explicit connection selectors.
 
 > [!WARNING]
-> `--yolo` is on by default, and the current checkout, the required Git metadata, and the host Codex home are mounted read-write. Only use this on projects you trust. The container process also gets `--disable apps`, which affects only that process and leaves the shared config alone.
+> Codex runs with `--yolo`; Claude Code runs with
+> `--dangerously-skip-permissions`. The selected agent receives the current
+> checkout, required Git metadata, and explicitly selected credentials. Use
+> this only with projects you trust.
 
-A few common extras:
+Common commands:
 
 ```bash
-docker-codex -- review "review the current branch"   # everything after -- goes to Codex as-is
-docker-codex --isolated issue-123                    # work in an isolated worktree → docs/en/worktree.md
-docker-codex --bind /path/to/fixtures:ro --          # mount an extra read-only dir → docs/en/worktree.md
-docker-codex --pat-path ~/.local/share/docker-codex/pat/github-x  # git push from the container → docs/en/credentials.md
+docker-agent codex -- review "review the current branch"
+docker-agent claude --official-subscription
+docker-agent claude --official-api
+docker-agent claude --profile deepseek -- --version
+docker-agent codex --isolated issue-123
+docker-agent claude --bind /path/to/fixtures:ro --profile deepseek
+docker-agent codex --pat-path ~/.local/share/docker-agent/pat/github-x
 ```
 
-## Options
+## Command-line options
+
+Shared options:
 
 ```text
 --build
-    Build the image before launching.
+    Build docker-agent:local before launching; requires the source checkout.
 
 --image IMAGE
-    Use another image reference instead of docker-codex:local.
+    Use another image instead of docker-agent:local.
 
 --isolated NAME
-    Create and use retained branch codex/NAME and its host worktree.
+    Create and use a retained codex/NAME branch and host worktree.
 
 --bind PATH[:ro]
-    Mount an absolute directory at the same path; repeat as needed.
+    Mount an absolute directory at the same path; repeatable, :ro is read-only.
 
 --pat TOKEN
-    Provide a Git access token directly; stored under the data home with
-    mode 600 and mounted read-only at /codex-credentials/pat. The token
-    appears in shell history; prefer --pat-path.
+    Provide a Git token directly; it enters shell history, so prefer --pat-path.
 
 --pat-path FILE
-    Mount a token file read-only at /codex-credentials/pat.
-    DOCKER_CODEX_PAT_PATH sets the default.
+    Mount a Git token file read-only at /codex-credentials/pat.
 
 --disable-clipboard
-    Do not forward the host clipboard (display sockets) into the
-    container.
+    Do not forward host display sockets and clipboard access.
 
 --help, -h
-    Print command help.
+    Print help.
 ```
 
-To pin different tool versions at build time, use `--build-arg` — see [Development & verification](docs/en/development.md).
+Arguments after `--` are passed unchanged to Codex or Claude Code.
+
+Claude connection selectors are mutually exclusive:
+
+```text
+--official-subscription
+    On Linux/WSL, reuse the host Claude Code .credentials.json.
+
+--official-api
+    Use ANTHROPIC_API_KEY from the protected official-api.env profile.
+
+--profile NAME
+    Use the protected NAME.env custom-endpoint profile.
+```
+
+See [Claude Code integration](docs/en/claude.md) for profile creation, OAuth
+mounting, state isolation, UTC/locale policy, and security details.
 
 ## Docs
 
+- [Claude Code integration](docs/en/claude.md): menus, profiles, OAuth, state, cleanup.
 - [Checkout and worktrees](docs/en/worktree.md): mount rules, `--isolated`, `--bind`.
-- [Authentication and credentials](docs/en/credentials.md): how Codex home is shared, and how to `git push` from the container.
-- [Image environment and build caches](docs/en/environment.md): what's in the image, how the cache volumes work.
-- [Clipboard forwarding](docs/en/clipboard.md): how image paste works, and `--disable-clipboard`.
-- [Platform notes](docs/en/platforms.md): WSL2 and macOS caveats.
-- [Security boundary](docs/en/security.md): what the container may do, and what the launcher never mounts.
-- [Development and verification](docs/en/development.md): running tests, overriding build versions.
+- [Authentication and credentials](docs/en/credentials.md): Codex home, Claude credentials, Git push.
+- [Image environment and build caches](docs/en/environment.md): toolchain, locale, cache volumes.
+- [Clipboard forwarding](docs/en/clipboard.md): image paste and `--disable-clipboard`.
+- [Platform notes](docs/en/platforms.md): Linux, WSL2, and macOS differences.
+- [Security boundary](docs/en/security.md): container privileges, disabled approvals, credential visibility.
+- [Development and verification](docs/en/development.md): tests and build versions.

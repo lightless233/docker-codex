@@ -12,6 +12,9 @@
 在 WSL2 中，构建性能敏感的项目建议存放在 Linux 文件系统内，而不是
 `/mnt/c`。
 
+Linux/WSL 可以通过 `--official-subscription` 单文件挂载宿主 Claude Code
+的 `.credentials.json`。具体权限和路径见 [Claude Code 集成](claude.md)。
+
 ## macOS
 
 Docker Desktop 必须允许共享 checkout、外部 Git metadata、Codex home
@@ -19,13 +22,14 @@ Docker Desktop 必须允许共享 checkout、外部 Git metadata、Codex home
 Docker Desktop 的文件共享设置中。
 
 入口脚本能够处理 macOS 常见的 UID 501/GID 20，不假设对应组名一定未被
-Debian 占用。宿主机 Keychain 中的凭据仍然无法进入容器。
+Debian 占用。宿主机 Keychain 中的 Codex 或 Claude 凭据仍然无法进入
+容器；Claude 官方订阅模式会明确拒绝，使用 API profile 代替。
 
 在 Apple Silicon 上，本地构建会生成原生 Linux arm64 镜像。如果项目明确
 需要 Linux amd64 环境，可以手动选择平台：
 
 ```bash
-DOCKER_DEFAULT_PLATFORM=linux/amd64 ./docker-codex --build -- --version
+DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -t docker-agent:local .
 ```
 
 通过模拟运行 amd64 镜像时，构建和运行速度都会更慢。

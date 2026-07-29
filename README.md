@@ -1,83 +1,113 @@
-# docker-codex
+# docker-agent
 
 **简体中文** | [English](README.en.md)
 
-在 Docker 容器里运行 Codex CLI 的启动脚本。容器挂载你当前的 Git checkout，Codex 的修改直接落在宿主机文件上；`~/.codex` 共享，登录态和配置不用再弄一份。容器摸不到系统的其他部分，可以放心让它全自动干活。
+在同一个 Docker 镜像里运行 Codex CLI 或 Claude Code。容器挂载当前 Git
+checkout，agent 的修改直接落在宿主文件上；Git metadata、构建缓存、可选
+worktree 和剪贴板转发由统一启动器管理。原有 `docker-codex` 命令继续兼容。
 
 ## 快速开始
 
-前置条件：Git、Bash 3.2+、Docker daemon 已启动，宿主机上有 `~/.codex`（在本机用过 Codex CLI 就有）。
+前置条件：Git、Bash 3.2+、已经启动的 Docker daemon。使用 Codex 时宿主机
+需要 `${CODEX_HOME:-$HOME/.codex}`；复用 Claude 官方订阅时，需要先在
+Linux/WSL 宿主机上完成 Claude Code 登录。
 
 ```bash
-# 构建镜像，只需一次
-cd /absolute/path/to/docker-codex
-./docker-codex --build -- --version
+# 在源码目录构建一次共享镜像
+docker build -t docker-agent:local .
 
-# 安装启动器
-sudo install -m 0755 ./docker-codex /usr/local/bin/docker-codex
+# 同一个脚本按安装名称分发
+sudo install -m 0755 ./docker-agent /usr/local/bin/docker-agent
+sudo install -m 0755 ./docker-agent /usr/local/bin/docker-codex
+sudo install -m 0755 ./docker-agent /usr/local/bin/docker-claude
 
-# 随便进一个项目，启动
+# 在任意 Git checkout 中启动
 cd /path/to/your-project
-docker-codex
+docker-agent codex
+docker-agent claude
+docker-agent claude --profile deepseek
 ```
 
-启动之后和平时的 Codex 没什么区别，只是跑在容器里。
+`docker-codex` 等价于 `docker-agent codex`，`docker-claude` 等价于
+`docker-agent claude`。没有 `sudo` 时，可以用同样的三条 `install` 命令
+安装到 `$HOME/.local/bin`。
 
-没有 `sudo` 就装到用户目录：`install -m 0755 ./docker-codex "$HOME/.local/bin/docker-codex"`（记得把 `~/.local/bin` 加进 `PATH`）。重建镜像要回到这个仓库跑 `./docker-codex --build`；启动器脚本有更新就重新执行一次 `install`。
-
-支持 Linux、WSL2、macOS（Docker Desktop，含 Apple Silicon）。
+`docker-agent claude` 在交互终端显示连接菜单：官方订阅/OAuth、官方 API
+key、自定义 endpoint；选择自定义 endpoint 后再显示按名称排序的 profile
+菜单。脚本或 CI 没有 TTY，必须显式使用三个连接参数之一。
 
 > [!WARNING]
-> 默认 `--yolo`，并且以读写方式挂载当前 checkout、必要的 Git metadata 和宿主 Codex home。只在你信任的项目里用。容器进程还会带 `--disable apps`，只影响当次进程，不改共享配置。
+> Codex 默认使用 `--yolo`，Claude Code 默认使用
+> `--dangerously-skip-permissions`。当前 checkout、必要的 Git metadata 和
+> 显式凭证会按用途挂载给所选 agent；请只在信任的项目中使用。
 
-几个常用的进阶参数：
+常用命令：
 
 ```bash
-docker-codex -- review "review the current branch"   # -- 后面的参数原样传给 Codex
-docker-codex --isolated issue-123                    # 开个隔离 worktree 干活 → docs/zh/worktree.md
-docker-codex --bind /path/to/fixtures:ro --          # 额外挂一个只读目录 → docs/zh/worktree.md
-docker-codex --pat-path ~/.local/share/docker-codex/pat/github-x  # 容器里要 git push → docs/zh/credentials.md
+docker-agent codex -- review "review the current branch"
+docker-agent claude --official-subscription
+docker-agent claude --official-api
+docker-agent claude --profile deepseek -- --version
+docker-agent codex --isolated issue-123
+docker-agent claude --bind /path/to/fixtures:ro --profile deepseek
+docker-agent codex --pat-path ~/.local/share/docker-agent/pat/github-x
 ```
 
 ## 命令行选项
 
+公共选项：
+
 ```text
 --build
-    启动前构建镜像。
+    启动前从源码目录构建 docker-agent:local。
 
 --image IMAGE
-    使用其他镜像，而不是默认的 docker-codex:local。
+    使用其他镜像，而不是默认的 docker-agent:local。
 
 --isolated NAME
-    创建并使用保留的 codex/NAME 分支及其宿主机 worktree。
+    创建并使用保留的 codex/NAME 分支及宿主 worktree。
 
 --bind PATH[:ro]
-    将绝对目录挂载到容器内相同路径；可以重复指定。
+    将绝对目录挂载到容器内相同路径；可重复，:ro 表示只读。
 
 --pat TOKEN
-    直接提供 Git 访问 token；存储在 data home（600 权限）并以只读
-    挂载到 /codex-credentials/pat。token 会出现在 shell 历史中，
-    建议优先使用 --pat-path。
+    直接提供 Git token；会进入 shell 历史，优先使用 --pat-path。
 
 --pat-path FILE
-    将 token 文件只读挂载到 /codex-credentials/pat；
-    DOCKER_CODEX_PAT_PATH 可设置默认值。
+    将 Git token 文件只读挂载到 /codex-credentials/pat。
 
 --disable-clipboard
-    不转发宿主剪贴板（显示 socket）到容器内。
+    不转发宿主显示 socket 和剪贴板。
 
 --help, -h
     输出帮助。
 ```
 
-构建时改工具版本用 `--build-arg`，见[开发与验证](docs/zh/development.md)。
+`--` 后的参数不再由启动器解释，原样传给 Codex 或 Claude Code。
+
+Claude 连接参数互斥：
+
+```text
+--official-subscription
+    Linux/WSL：复用宿主 Claude Code 的 .credentials.json。
+
+--official-api
+    使用受保护的 official-api.env 中的 ANTHROPIC_API_KEY。
+
+--profile NAME
+    使用受保护的 NAME.env 自定义 endpoint profile。
+```
+
+profile 创建、OAuth 挂载、状态隔离、UTC/locale 和安全边界详见
+[Claude Code 集成](docs/zh/claude.md)。
 
 ## 文档
 
+- [Claude Code 集成](docs/zh/claude.md)：连接菜单、profile、OAuth、状态与清理。
 - [Checkout 与 worktree](docs/zh/worktree.md)：挂载规则、`--isolated`、`--bind`。
-- [认证与凭证](docs/zh/credentials.md)：Codex home 怎么共享、容器里怎么 `git push`。
-- [镜像环境与构建缓存](docs/zh/environment.md)：镜像里装了什么、缓存 volume 怎么管。
-- [剪贴板转发](docs/zh/clipboard.md)：容器里贴图的原理和 `--disable-clipboard`。
-- [平台说明](docs/zh/platforms.md)：WSL2 和 macOS 的坑。
-- [安全边界](docs/zh/security.md)：容器有哪些权限、启动器绝不挂什么。
-- [开发与验证](docs/zh/development.md)：跑测试、改构建版本。
+- [认证与凭证](docs/zh/credentials.md)：Codex home、Claude 凭证、Git push。
+- [镜像环境与构建缓存](docs/zh/environment.md)：工具链、locale、缓存 volume。
+- [剪贴板转发](docs/zh/clipboard.md)：容器内贴图和 `--disable-clipboard`。
+- [平台说明](docs/zh/platforms.md)：Linux、WSL2、macOS 差异。
+- [安全边界](docs/zh/security.md)：容器权限、审批关闭和凭证可见性。
+- [开发与验证](docs/zh/development.md)：测试与构建版本。

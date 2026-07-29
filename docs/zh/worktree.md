@@ -16,7 +16,7 @@ worktree 或 submodule，并且 Git metadata 位于其他目录，启动器会�
 
 ```bash
 cd /home/me/program/my-long-lived-worktree
-docker-codex
+docker-agent codex
 ```
 
 容器对 Git common directory 拥有写权限，因为暂存和提交操作需要更新
@@ -28,14 +28,14 @@ worktree。
 需要新建隔离 worktree 时，显式指定：
 
 ```bash
-docker-codex --isolated issue-123
+docker-agent codex --isolated issue-123
 ```
 
 该命令会创建：
 
 - 分支 `codex/issue-123`
 - 位于以下目录的 worktree：
-  `${DOCKER_CODEX_DATA_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/docker-codex}/worktrees`
+  `${DOCKER_AGENT_DATA_HOME:-${DOCKER_CODEX_DATA_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/docker-agent}}/worktrees`
 - 使用新 worktree 启动的容器
 
 Codex 或 Docker 退出后，worktree 和分支都会保留；即使启动失败也不会自动
@@ -56,7 +56,7 @@ git branch -d codex/issue-123
 `--bind`：
 
 ```bash
-docker-codex \
+docker-agent codex \
   --bind /absolute/path/to/fixtures:ro \
   --bind /absolute/path/to/local-tooling \
   --

@@ -14,9 +14,9 @@ Usage: docker-agent {codex|claude} [options] [--] [agent args...]
 
 Run Codex or Claude Code in Docker against the current Git checkout.
 
-Agents:
-  codex                    Run Codex
-  claude                   Run Claude Code
+Commands:
+  docker-agent codex       Run Codex
+  docker-agent claude      Run Claude Code
 
 Use "docker-agent AGENT --help" for agent-specific options.
 EOF
@@ -40,8 +40,8 @@ Options:
                           /codex-credentials/pat (visible in shell history;
                           prefer --pat-path)
   --pat-path FILE         Mount a token file read-only at
-                          /codex-credentials/pat (DOCKER_CODEX_PAT_PATH sets
-                          the default)
+                          /codex-credentials/pat (DOCKER_AGENT_PAT_PATH sets
+                          the default; legacy DOCKER_CODEX_PAT_PATH also works)
   --disable-clipboard     Do not forward the host clipboard (display sockets)
                           into the container
   --help, -h              Show this help
@@ -72,6 +72,7 @@ Options:
   --help, -h                Show this help
 
 Without a connection selector, an interactive terminal shows a connection menu.
+Non-interactive launches require an explicit connection selector.
 Arguments after -- are passed to Claude Code without reinterpretation.
 Isolated worktrees and their branches are retained after the container exits.
 EOF

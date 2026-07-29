@@ -17,7 +17,7 @@ For example, a long-lived linked worktree can be used directly:
 
 ```bash
 cd /home/me/program/my-long-lived-worktree
-docker-codex
+docker-agent codex
 ```
 
 The container receives write access to the Git common directory because staging
@@ -29,14 +29,14 @@ trees unless they are separately mounted.
 Create a new host worktree explicitly:
 
 ```bash
-docker-codex --isolated issue-123
+docker-agent codex --isolated issue-123
 ```
 
 This creates:
 
 - branch `codex/issue-123`;
 - a worktree below
-  `${DOCKER_CODEX_DATA_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/docker-codex}/worktrees`;
+  `${DOCKER_AGENT_DATA_HOME:-${DOCKER_CODEX_DATA_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/docker-agent}}/worktrees`;
 - a container using that new worktree.
 
 The worktree and branch are retained when Codex or Docker exits, including when
@@ -56,7 +56,7 @@ user deliberately overrides it. The launcher never removes worktrees itself.
 Use repeatable `--bind` options for fixtures or tools outside the checkout:
 
 ```bash
-docker-codex \
+docker-agent codex \
   --bind /absolute/path/to/fixtures:ro \
   --bind /absolute/path/to/local-tooling \
   --

@@ -1,9 +1,7 @@
-# Codex configuration, authentication, and Git push credentials
+# Agent configuration, authentication, and Git push credentials
 
-This page explains how the host Codex home is shared with the container, the
-operating-system boundary of authentication, and how to explicitly provide
-Git push credentials. Read it when configuring authentication or when you
-need `git push` from inside the container.
+This page explains the authentication boundaries for Codex and Claude Code,
+and how to explicitly provide Git push credentials.
 
 ## Codex configuration, memory, and authentication
 
@@ -30,6 +28,18 @@ Configuration that names other absolute host paths still needs a corresponding
 `--bind`. STDIO MCP commands and native tools referenced by `config.toml` must
 also be installed in the image or made visible explicitly.
 
+## Claude Code authentication and state
+
+Claude does not receive the complete `~/.claude`. On Linux/WSL, official
+subscription mode mounts only
+`${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json` read-write into state
+isolated by repository, worktree, and connection. API keys and custom
+endpoints come from mode-`0600` profiles outside the checkout. A Linux
+container cannot reuse macOS Keychain.
+
+See [Claude Code integration](claude.md) for profile syntax, selectors, state
+paths, and cleanup.
+
 ## Providing Git push credentials
 
 The container starts with no Git credentials, so pushes fail. Two explicit
@@ -44,14 +54,15 @@ The recommended form keeps the token in a dedicated file outside the
 checkout:
 
 ```bash
-install -d -m 700 ~/.local/share/docker-codex/pat
-$EDITOR ~/.local/share/docker-codex/pat/github-<repo>   # the token, one line
-chmod 600 ~/.local/share/docker-codex/pat/github-<repo>
+install -d -m 700 ~/.local/share/docker-agent/pat
+$EDITOR ~/.local/share/docker-agent/pat/github-<repo>   # the token, one line
+chmod 600 ~/.local/share/docker-agent/pat/github-<repo>
 
-docker-codex --pat-path ~/.local/share/docker-codex/pat/github-<repo>
+docker-agent codex --pat-path ~/.local/share/docker-agent/pat/github-<repo>
 ```
 
-Set `DOCKER_CODEX_PAT_PATH` to make that path the default and skip typing it.
+Set `DOCKER_AGENT_PAT_PATH` to make that path the default. The legacy
+`DOCKER_CODEX_PAT_PATH` remains a compatibility fallback.
 
 `--pat TOKEN` passes the token on the command line instead: the launcher
 writes it to `pat/<repo-id>` under the data home (directory mode 700, file

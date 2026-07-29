@@ -11,8 +11,9 @@ The image uses Debian 13 slim and installs Node.js 24.18.0 LTS from the
 official nodejs.org linux-x64/linux-arm64 archive after checking it against
 the release's `SHASUMS256.txt`. It also contains pnpm, Rust stable (with
 rustfmt and clippy), Codex CLI, Git, Python 3 (pip and venv), common native
-build dependencies, and shell utilities useful during agentic development.
-An `/etc/profile.d` entry keeps Cargo and pnpm on PATH for login shells.
+build dependencies, Claude Code, and shell utilities useful during agentic
+development. The image generates the `en_US.UTF-8` locale. An
+`/etc/profile.d` entry keeps Cargo and pnpm on PATH for login shells.
 The image links Rust builds with mold by default via `RUSTFLAGS` (a project's
 own rustflags or `docker run -e RUSTFLAGS=...` override it), and ships
 sccache for opt-in reuse of dependency builds across worktrees:
@@ -23,14 +24,17 @@ RUSTC_WRAPPER=sccache SCCACHE_DIR=/codex-cache/sccache cargo build
 
 ## Environment notes for the in-container agent
 
-The image ships `/usr/local/share/docker-codex/agent-notes.md`, which
+The image ships `/usr/local/share/docker-agent/agent-notes.md`, which
 records key environment facts: whether push credentials are configured, the
 default mold linker, opt-in sccache usage, the `CARGO_TARGET_DIR` location,
-and so on. The entrypoint injects it automatically via
-`-c user_instructions=...` when starting `codex`, so the in-container agent
-knows the environment without being told; `-c` overrides passed by the
-caller after `--` take precedence. The file is versioned with the image —
-update it whenever the toolchain facts change.
+and so on. The entrypoint injects it via `-c user_instructions=...` for Codex
+and `--append-system-prompt-file` for Claude. It contains no response-language,
+personality, endpoint, or model instruction. Codex `-c` overrides passed after
+`--` take precedence.
+
+Claude alone receives UTC and `en_US.UTF-8`; this does not change Codex or
+ordinary container commands and does not force Claude to answer in English.
+See [Claude Code integration](claude.md) for the complete policy.
 
 ## Build caches
 
