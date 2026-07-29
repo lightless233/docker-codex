@@ -22,6 +22,20 @@ run_claude_launcher() {
     run_named_launcher "$repo" "$ROOT" docker-agent claude "$@"
 }
 
+run_claude_menu() {
+  local repo=$1 keys=$2 menu_log=$3
+  shift 3
+  (
+    exec 9<"$keys"
+    exec 8>"$menu_log"
+    export DOCKER_AGENT_TEST_FORCE_TTY=1
+    export DOCKER_AGENT_MENU_INPUT_FD=9
+    export DOCKER_AGENT_MENU_OUTPUT_FD=8
+    DOCKER_AGENT_DATA_HOME="$TEST_AGENT_DATA_HOME" \
+      run_named_launcher "$repo" "$ROOT" docker-agent claude "$@"
+  )
+}
+
 state_mount_source() {
   local log=$1 line
   line=$(grep -F 'target=/claude-state>' "$log")
@@ -484,6 +498,147 @@ test_subscription_rejects_macos_and_invalid_credentials_before_state() {
     fail "invalid credential created Claude state"
 }
 
+test_menu_selects_sorted_custom_profile_and_hides_reserved_profile() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  local keys="$TEST_TMP/keys"
+  local menu_log="$TEST_TMP/menu.log"
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+  write_profile deepseek \
+    'ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic' \
+    'ANTHROPIC_AUTH_TOKEN=deepseek-secret'
+  write_profile alpha \
+    'ANTHROPIC_BASE_URL=https://alpha.example.invalid/anthropic' \
+    'ANTHROPIC_AUTH_TOKEN=alpha-secret'
+  write_profile official-api \
+    'ANTHROPIC_API_KEY=official-secret'
+  printf '\033[B\033[B\n\033[B\n' >"$keys"
+
+  run_claude_menu "$repo" "$keys" "$menu_log" -- --version
+
+  assert_line "<DOCKER_AGENT_CLAUDE_CONNECTION=profile:deepseek>" \
+    "$TEST_DOCKER_LOG"
+  assert_contains "请选择 Claude Code 的连接方式" "$menu_log"
+  assert_contains "请选择自定义 endpoint profile" "$menu_log"
+  assert_contains "alpha" "$menu_log"
+  assert_contains "deepseek" "$menu_log"
+  assert_not_contains "official-api" "$menu_log"
+}
+
+test_menu_supports_top_level_choices_and_jk_navigation() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  local keys="$TEST_TMP/keys"
+  local menu_log="$TEST_TMP/menu.log"
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+  write_profile official-api \
+    'ANTHROPIC_API_KEY=official-secret'
+
+  printf '\n' >"$keys"
+  run_claude_menu "$repo" "$keys" "$menu_log" -- --version
+  assert_line "<DOCKER_AGENT_CLAUDE_CONNECTION=official-subscription>" \
+    "$TEST_DOCKER_LOG"
+
+  : >"$TEST_DOCKER_LOG"
+  printf '\033[B\n' >"$keys"
+  run_claude_menu "$repo" "$keys" "$menu_log" -- --version
+  assert_line "<DOCKER_AGENT_CLAUDE_CONNECTION=official-api>" \
+    "$TEST_DOCKER_LOG"
+
+  : >"$TEST_DOCKER_LOG"
+  printf 'jk\n' >"$keys"
+  run_claude_menu "$repo" "$keys" "$menu_log" -- --version
+  assert_line "<DOCKER_AGENT_CLAUDE_CONNECTION=official-subscription>" \
+    "$TEST_DOCKER_LOG"
+}
+
+test_menu_cancel_returns_130_without_creating_state_or_worktree() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  local keys="$TEST_TMP/keys"
+  local menu_log="$TEST_TMP/menu.log"
+  local errors="$TEST_TMP/errors"
+  local status
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+
+  printf '\033' >"$keys"
+  set +e
+  run_claude_menu "$repo" "$keys" "$menu_log" \
+    --isolated menu-cancel -- --version >"$errors" 2>&1
+  status=$?
+  set -e
+  [[ $status == 130 ]] ||
+    fail "Escape cancellation returned $status instead of 130"
+  assert_no_line "<run>" "$TEST_DOCKER_LOG"
+  if git -C "$repo" show-ref --verify --quiet refs/heads/codex/menu-cancel; then
+    fail "Escape cancellation created an isolated worktree branch"
+  fi
+  [[ ! -e $TEST_AGENT_DATA_HOME/claude ]] ||
+    fail "Escape cancellation created Claude state"
+
+  printf '\003' >"$keys"
+  set +e
+  run_claude_menu "$repo" "$keys" "$menu_log" -- --version \
+    >"$errors" 2>&1
+  status=$?
+  set -e
+  [[ $status == 130 ]] ||
+    fail "Ctrl-C cancellation returned $status instead of 130"
+  assert_no_line "<run>" "$TEST_DOCKER_LOG"
+  [[ ! -e $TEST_AGENT_DATA_HOME/claude ]] ||
+    fail "Ctrl-C cancellation created Claude state"
+}
+
+test_menu_reports_empty_custom_profile_directory() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  local keys="$TEST_TMP/keys"
+  local menu_log="$TEST_TMP/menu.log"
+  local errors="$TEST_TMP/errors"
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+  printf '\033[B\033[B\n' >"$keys"
+
+  if run_claude_menu "$repo" "$keys" "$menu_log" -- --version \
+    >"$errors" 2>&1; then
+    fail "empty custom profile menu unexpectedly succeeded"
+  fi
+
+  assert_contains "$TEST_AGENT_CONFIG_HOME/claude/profiles" "$errors"
+  assert_contains "install -m 600" "$errors"
+  assert_no_line "<run>" "$TEST_DOCKER_LOG"
+  [[ ! -e $TEST_AGENT_DATA_HOME/claude ]] ||
+    fail "empty custom profile menu created Claude state"
+}
+
+test_noninteractive_launch_requires_explicit_connection() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  local errors="$TEST_TMP/errors"
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+
+  if run_claude_launcher "$repo" -- --version >"$errors" 2>&1; then
+    fail "non-interactive launch without a connection unexpectedly succeeded"
+  fi
+
+  assert_contains "non-interactive" "$errors"
+  assert_contains "--official-subscription" "$errors"
+  assert_contains "--official-api" "$errors"
+  assert_contains "--profile NAME" "$errors"
+  assert_no_line "<run>" "$TEST_DOCKER_LOG"
+  [[ ! -e $TEST_AGENT_DATA_HOME/claude ]] ||
+    fail "non-interactive launch created Claude state"
+}
+
 init_tests
 test_official_api_profile_is_mounted_without_secret_in_docker_args
 test_custom_profile_validates_endpoint_and_single_credential
@@ -498,4 +653,9 @@ test_connections_get_distinct_state_and_profile_content_reuses_state
 test_state_identity_mismatch_fails_before_docker
 test_subscription_mounts_only_host_credential_file_readwrite
 test_subscription_rejects_macos_and_invalid_credentials_before_state
+test_menu_selects_sorted_custom_profile_and_hides_reserved_profile
+test_menu_supports_top_level_choices_and_jk_navigation
+test_menu_cancel_returns_130_without_creating_state_or_worktree
+test_menu_reports_empty_custom_profile_directory
+test_noninteractive_launch_requires_explicit_connection
 printf 'claude launcher tests: PASS\n'
