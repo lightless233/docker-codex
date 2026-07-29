@@ -38,7 +38,9 @@ equivalent to `docker-agent claude`. Without `sudo`, run
 In an interactive terminal, `docker-agent claude` shows connection choices for
 an official subscription/OAuth login, an official API key, or a custom
 endpoint. The custom choice opens a second, name-sorted profile menu. Scripts
-and CI without a TTY must use one of the explicit connection selectors.
+and CI without a TTY must use one of the explicit connection selectors. The
+profile menu shows `ANTHROPIC_MODEL` after each name and warns when the primary
+model is not configured.
 
 > [!WARNING]
 > Codex runs with `--yolo`; Claude Code runs with
@@ -95,7 +97,8 @@ Claude connection and profile options:
 
 ```text
 --create-profile
-    Interactively create a custom-endpoint profile; must be used alone.
+    Interactively create a custom-endpoint profile; must be used alone; reminds
+    you to configure the primary model after creation.
 
 --official-subscription
     On Linux/WSL, reuse the host Claude Code .credentials.json.

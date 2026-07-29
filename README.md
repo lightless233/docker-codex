@@ -36,7 +36,8 @@ docker-agent claude --profile deepseek
 
 `docker-agent claude` 在交互终端显示连接菜单：官方订阅/OAuth、官方 API
 key、自定义 endpoint；选择自定义 endpoint 后再显示按名称排序的 profile
-菜单。脚本或 CI 没有 TTY，必须显式使用三个连接参数之一。
+菜单，并在名称后显示 `ANTHROPIC_MODEL`；未配置主模型时会显示原因明确的
+警告。脚本或 CI 没有 TTY，必须显式使用三个连接参数之一。
 
 > [!WARNING]
 > Codex 默认使用 `--yolo`，Claude Code 默认使用
@@ -92,7 +93,7 @@ Claude 连接与 profile 选项：
 
 ```text
 --create-profile
-    交互创建自定义 endpoint profile；必须单独使用。
+    交互创建自定义 endpoint profile；必须单独使用；完成后提醒配置主模型。
 
 --official-subscription
     Linux/WSL：复用宿主 Claude Code 的 .credentials.json。

@@ -20,7 +20,11 @@ The top-level menu offers:
 The custom choice opens a second menu containing every `*.env` profile except
 `official-api.env`, sorted by name under the C locale. Use arrow keys or
 `j`/`k`, Enter to confirm, and Escape or Ctrl-C to cancel with status 130. No
-choice is remembered.
+choice is remembered. Each name is followed by its `ANTHROPIC_MODEL` value. If
+that field is empty or absent, the menu warns that Claude's default model name
+will be used, even when other model mappings are present. The preview removes
+control characters and truncates model names longer than 64 characters without
+changing the value stored in the profile.
 
 Direct selectors work well in aliases, scripts, and CI:
 
@@ -57,9 +61,11 @@ plaintext; the creator stores it as `ANTHROPIC_AUTH_TOKEN`. This action must be
 used alone, but it requires neither a Git checkout nor a running Docker daemon.
 It refuses to overwrite an existing profile.
 
-On success it prints the absolute profile path and launch command. Edit that
-file to add optional allowlisted fields such as model mappings. A profile can
-also be created manually:
+On success it prints the absolute profile path and launch command, followed by
+an asterisk-framed warning to configure `ANTHROPIC_MODEL`; otherwise Claude
+Code sends its default Claude model name to the custom endpoint. Edit that file
+to add optional allowlisted fields such as model mappings. A profile can also
+be created manually:
 
 ```bash
 profile_root="${XDG_CONFIG_HOME:-$HOME/.config}/docker-agent/claude/profiles"

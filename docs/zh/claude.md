@@ -19,7 +19,10 @@ docker-agent claude
 
 第三项会打开二级菜单，列出 profile 目录中除 `official-api.env` 外的
 `*.env`，按 C locale 的名称顺序排列。方向键或 `j`/`k` 移动，Enter
-确认，Esc 或 Ctrl-C 取消并返回 130。菜单不记忆上次选择。
+确认，Esc 或 Ctrl-C 取消并返回 130。菜单不记忆上次选择。每个名称后会
+显示 `ANTHROPIC_MODEL` 的值；该变量为空或缺失时，即使配置了其他模型
+映射，也会显示“将使用 Claude 默认模型名”的警告。菜单预览会移除控制
+字符，并将超过 64 个字符的模型名截断；profile 中的实际值不会改变。
 
 也可以直接选择连接，适合 shell alias、脚本和 CI：
 
@@ -56,8 +59,10 @@ docker-claude --create-profile
 checkout，也不要求 Docker daemon 正在运行。同名 profile 已存在时拒绝
 覆盖。
 
-创建完成后会输出 profile 的绝对路径和启动命令。如需添加模型映射等其他
-白名单环境变量，直接编辑输出的文件。也可以手动创建：
+创建完成后会输出 profile 的绝对路径和启动命令，并在星号警示框中提醒
+配置 `ANTHROPIC_MODEL`；否则 Claude Code 会向自定义 endpoint 使用默认
+Claude 模型名。如需添加模型映射等其他白名单环境变量，直接编辑输出的
+文件。也可以手动创建：
 
 ```bash
 profile_root="${XDG_CONFIG_HOME:-$HOME/.config}/docker-agent/claude/profiles"

@@ -137,7 +137,11 @@ test_profile_creator_masks_key_and_writes_protected_profile_outside_git() {
   assert_not_contains 'secret-key' "$output"
   assert_contains "Profile 已创建：$profile" "$output"
   assert_contains 'docker-claude --profile deepseek' "$output"
-  assert_contains "如需配置模型等其他环境变量，请编辑该文件" "$output"
+  assert_contains '************************************************************' "$output"
+  assert_contains '⚠ 重要：尚未配置 ANTHROPIC_MODEL' "$output"
+  assert_contains '将使用 Claude 默认模型名' "$output"
+  assert_contains "请编辑：$profile" "$output"
+  assert_contains 'ANTHROPIC_MODEL=你的模型名称' "$output"
 }
 
 test_profile_creator_backspace_removes_masked_character_and_secret_character() {
@@ -739,10 +743,20 @@ test_menu_selects_sorted_custom_profile_and_hides_reserved_profile() {
   prepare_fake_runtime "$TEST_TMP"
   write_profile deepseek \
     'ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic' \
-    'ANTHROPIC_AUTH_TOKEN=deepseek-secret'
+    'ANTHROPIC_AUTH_TOKEN=deepseek-secret' \
+    'ANTHROPIC_MODEL=deepseek-v4-pro[1m]'
   write_profile alpha \
     'ANTHROPIC_BASE_URL=https://alpha.example.invalid/anthropic' \
-    'ANTHROPIC_AUTH_TOKEN=alpha-secret'
+    'ANTHROPIC_AUTH_TOKEN=alpha-secret' \
+    'ANTHROPIC_DEFAULT_SONNET_MODEL=alpha-sonnet'
+  write_profile unsafe \
+    'ANTHROPIC_BASE_URL=https://unsafe.example.invalid/anthropic' \
+    'ANTHROPIC_AUTH_TOKEN=unsafe-secret' \
+    $'ANTHROPIC_MODEL=unsafe\033[31m-model'
+  write_profile very-long \
+    'ANTHROPIC_BASE_URL=https://long.example.invalid/anthropic' \
+    'ANTHROPIC_AUTH_TOKEN=long-secret' \
+    'ANTHROPIC_MODEL=1234567890123456789012345678901234567890123456789012345678901234567890'
   write_profile official-api \
     'ANTHROPIC_API_KEY=official-secret'
   printf '\033[B\033[B\n\033[B\n' >"$keys"
@@ -753,8 +767,17 @@ test_menu_selects_sorted_custom_profile_and_hides_reserved_profile() {
     "$TEST_DOCKER_LOG"
   assert_contains "请选择 Claude Code 的连接方式" "$menu_log"
   assert_contains "请选择自定义 endpoint profile" "$menu_log"
-  assert_contains "alpha" "$menu_log"
-  assert_contains "deepseek" "$menu_log"
+  assert_contains \
+    "alpha  [⚠ 主模型未配置：将使用 Claude 默认模型名]" "$menu_log"
+  assert_contains \
+    "deepseek  [主模型: deepseek-v4-pro[1m]]" "$menu_log"
+  assert_contains \
+    "unsafe  [主模型: unsafe[31m-model]" "$menu_log"
+  assert_not_contains \
+    $'unsafe  [主模型: unsafe\033[31m-model]' "$menu_log"
+  assert_contains \
+    "very-long  [主模型: 1234567890123456789012345678901234567890123456789012345678901...]" \
+    "$menu_log"
   assert_not_contains "official-api" "$menu_log"
 }
 

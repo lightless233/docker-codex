@@ -291,15 +291,44 @@ menu_select() {
   done
 }
 
+claude_profile_model_summary() {
+  local file=$1 line model sanitized
+
+  if [[ -f $file && ! -L $file && -r $file ]]; then
+    while IFS= read -r line || [[ -n $line ]]; do
+      [[ $line == ANTHROPIC_MODEL=* ]] || continue
+      model=${line#*=}
+      if [[ -n $model ]]; then
+        sanitized=$(printf '%s' "$model" | LC_ALL=C tr -d '[:cntrl:]')
+        if [[ -n $sanitized ]]; then
+          if ((${#sanitized} > 64)); then
+            sanitized="${sanitized:0:61}..."
+          fi
+          printf '主模型: %s\n' "$sanitized"
+          return
+        fi
+      fi
+      break
+    done <"$file"
+  fi
+
+  printf '⚠ 主模型未配置：将使用 Claude 默认模型名\n'
+}
+
 choose_custom_profile_menu() {
-  local config_root profile_dir file name
+  local config_root profile_dir file name summary
   local profile_names=()
+  local profile_labels=()
 
   config_root=${DOCKER_AGENT_CONFIG_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/docker-agent}
   profile_dir="$config_root/claude/profiles"
   if [[ -d $profile_dir ]]; then
     while IFS= read -r name; do
-      [[ -n $name ]] && profile_names+=("$name")
+      if [[ -n $name ]]; then
+        profile_names+=("$name")
+        summary=$(claude_profile_model_summary "$profile_dir/$name.env")
+        profile_labels+=("$name  [$summary]")
+      fi
     done < <(
       shopt -s nullglob
       for file in "$profile_dir"/*.env; do
@@ -318,7 +347,7 @@ Create one with:
   install -m 600 /dev/null \"$profile_dir/NAME.env\""
   fi
 
-  menu_select "请选择自定义 endpoint profile：" "${profile_names[@]}" ||
+  menu_select "请选择自定义 endpoint profile：" "${profile_labels[@]}" ||
     return 130
   CLAUDE_PROFILE_NAME=${profile_names[$MENU_SELECTION]}
   CLAUDE_CONNECTION="profile:$CLAUDE_PROFILE_NAME"
@@ -499,8 +528,14 @@ create_claude_profile() {
   printf 'Profile 已创建：%s\n' "$profile_path" >&"$output_fd"
   printf '启动：docker-claude --profile %s\n' \
     "$CLAUDE_PROFILE_NAME" >&"$output_fd"
-  printf '如需配置模型等其他环境变量，请编辑该文件：%s\n' \
-    "$profile_path" >&"$output_fd"
+  printf '\n%s\n' \
+    '************************************************************' \
+    '⚠ 重要：尚未配置 ANTHROPIC_MODEL' \
+    '未配置时将使用 Claude 默认模型名，自定义 endpoint 可能无法识别。' \
+    "请编辑：$profile_path" \
+    '添加：ANTHROPIC_MODEL=你的模型名称' \
+    '如需配置其他模型映射或环境变量，也请编辑该文件。' \
+    '************************************************************' >&"$output_fd"
 }
 
 resolve_claude_connection() {
