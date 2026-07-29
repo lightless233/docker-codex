@@ -63,6 +63,20 @@ test_python_and_archive_tools_are_available() {
   '
 }
 
+test_agent_notes_are_readable_by_runtime_user() {
+  # The entrypoint switches from root to the host UID before starting an agent.
+  # shellcheck disable=SC2016 # Variables expand inside the container.
+  "$DOCKER_BIN" run --rm \
+    --env HOST_UID=12345 \
+    --env HOST_GID=23456 \
+    "$IMAGE" \
+    bash -c '
+      set -euo pipefail
+      [[ $(id -u) == 12345 ]]
+      head -c 1 /usr/local/share/docker-agent/agent-notes.md >/dev/null
+    '
+}
+
 test_claude_code_and_locale_are_installed() {
   "$DOCKER_BIN" run --rm --entrypoint bash "$IMAGE" -lc '
     set -euo pipefail
@@ -167,6 +181,7 @@ test_login_shell_keeps_toolchain_on_path
 test_claude_code_and_locale_are_installed
 test_claude_runtime_is_non_root_utc_and_en_us
 test_python_and_archive_tools_are_available
+test_agent_notes_are_readable_by_runtime_user
 test_mold_is_default_linker_and_sccache_is_available
 test_powershell_shim_reads_wayland_clipboard_image
 printf 'image tests: PASS\n'

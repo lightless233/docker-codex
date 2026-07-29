@@ -105,6 +105,7 @@ RUN npm install --global \
     && pnpm --version
 
 COPY --chmod=0755 container-entrypoint /usr/local/bin/container-entrypoint
+RUN install -d -m 0755 /usr/local/share/docker-agent
 COPY --chmod=0644 agent-notes.md /usr/local/share/docker-agent/agent-notes.md
 COPY --chmod=0755 container-powershell-shim /usr/local/bin/powershell.exe
 
