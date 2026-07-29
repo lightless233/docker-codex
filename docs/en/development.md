@@ -11,7 +11,7 @@ Build-time versions can be changed explicitly:
 ```bash
 docker build \
   --build-arg NODE_VERSION=24.18.0 \
-  --build-arg CODEX_VERSION=0.145.0 \
+  --build-arg CODEX_VERSION=0.146.0 \
   --build-arg CLAUDE_CODE_VERSION=2.1.212 \
   --build-arg PNPM_VERSION=10.14.0 \
   -t docker-agent:local .

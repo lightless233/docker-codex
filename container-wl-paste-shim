@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BACKEND=/usr/bin/wl-paste
+
+# WSLg may expose copied screenshots as BMP only. Claude Code requests PNG
+# first, so synthesize that one format without changing unrelated operations.
+is_list_request() {
+  [[ $# -eq 1 && ( ${1:-} == -l || ${1:-} == --list-types ) ]]
+}
+
+is_png_request() {
+  [[ $# -eq 2 && ( ${1:-} == -t || ${1:-} == --type ) &&
+    ${2:-} == image/png ]]
+}
+
+has_type() {
+  local types=$1
+  local wanted=$2
+  grep -Fxq "$wanted" <<<"$types"
+}
+
+if is_list_request "$@"; then
+  types=$("$BACKEND" "$@")
+  if ! has_type "$types" image/png && has_type "$types" image/bmp; then
+    printf '%s\n' "$types"
+    printf '%s\n' image/png
+    exit 0
+  fi
+  exec "$BACKEND" "$@"
+fi
+
+if is_png_request "$@"; then
+  types=$("$BACKEND" --list-types)
+  if has_type "$types" image/png; then
+    exec "$BACKEND" "$@"
+  fi
+  if has_type "$types" image/bmp; then
+    "$BACKEND" --type image/bmp |
+      python3 -c 'import sys; from PIL import Image; Image.open(sys.stdin.buffer).save(sys.stdout.buffer, "PNG")'
+    exit 0
+  fi
+fi
+
+exec "$BACKEND" "$@"

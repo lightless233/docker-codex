@@ -1,7 +1,7 @@
 FROM debian:13-slim
 
 ARG NODE_VERSION=24.18.0
-ARG CODEX_VERSION=0.145.0
+ARG CODEX_VERSION=0.146.0
 ARG CLAUDE_CODE_VERSION=2.1.212
 ARG PNPM_VERSION=10.14.0
 ARG TARGETARCH
@@ -108,6 +108,7 @@ COPY --chmod=0755 container-entrypoint /usr/local/bin/container-entrypoint
 RUN install -d -m 0755 /usr/local/share/docker-agent
 COPY --chmod=0644 agent-notes.md /usr/local/share/docker-agent/agent-notes.md
 COPY --chmod=0755 container-powershell-shim /usr/local/bin/powershell.exe
+COPY --chmod=0755 container-wl-paste-shim /usr/local/bin/wl-paste
 
 WORKDIR /workspace
 
