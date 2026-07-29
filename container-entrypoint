@@ -14,6 +14,22 @@ array_contains() {
   return 1
 }
 
+normalize_claude_profile_value() {
+  local value=$1 first last
+
+  NORMALIZED_CLAUDE_PROFILE_VALUE=$value
+  [[ -n $value ]] || return 0
+  first=${value:0:1}
+  last=${value: -1}
+  if [[ $first == \" || $first == \' || $last == \" || $last == \' ]]; then
+    ((${#value} >= 2)) &&
+      [[ $first == "$last" && ( $first == \" || $first == \' ) ]] ||
+      return 1
+    value=${value:1}
+    NORMALIZED_CLAUDE_PROFILE_VALUE=${value%?}
+  fi
+}
+
 load_claude_profile() {
   local file=$1 kind=$2
   local line key value assignment
@@ -56,6 +72,12 @@ load_claude_profile() {
       return 1
     fi
     seen_keys+=("$key")
+    if ! normalize_claude_profile_value "$value"; then
+      printf 'docker-agent: unmatched quote in Claude profile value: %s\n' \
+        "$key" >&2
+      return 1
+    fi
+    value=$NORMALIZED_CLAUDE_PROFILE_VALUE
 
     case $key in
       ANTHROPIC_BASE_URL)

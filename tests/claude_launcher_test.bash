@@ -307,14 +307,14 @@ test_custom_profile_validates_endpoint_and_single_credential() {
   make_repo "$repo"
   prepare_fake_runtime "$TEST_TMP"
   write_profile deepseek \
-    'ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic' \
-    'ANTHROPIC_AUTH_TOKEN=test-deepseek-secret' \
-    'ANTHROPIC_MODEL=deepseek-v4-pro[1m]' \
-    'ANTHROPIC_DEFAULT_OPUS_MODEL=deepseek-v4-pro[1m]' \
-    'ANTHROPIC_DEFAULT_SONNET_MODEL=deepseek-v4-pro[1m]' \
-    'ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek-v4-flash' \
-    'CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-flash' \
-    'CLAUDE_CODE_EFFORT_LEVEL=max'
+    'ANTHROPIC_BASE_URL="https://api.deepseek.com/anthropic?mode=thinking"' \
+    "ANTHROPIC_AUTH_TOKEN='test-deepseek=secret'" \
+    'ANTHROPIC_MODEL="deepseek-v4-pro[1m]"' \
+    "ANTHROPIC_DEFAULT_OPUS_MODEL='deepseek-v4-pro[1m]'" \
+    'ANTHROPIC_DEFAULT_SONNET_MODEL="deepseek-v4-pro[1m]"' \
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL='deepseek-v4-flash'" \
+    "CLAUDE_CODE_SUBAGENT_MODEL='deepseek-v4-flash'" \
+    'CLAUDE_CODE_EFFORT_LEVEL="max"'
 
   run_claude_launcher "$repo" --profile deepseek -- --version
 
@@ -378,6 +378,15 @@ test_profile_parser_rejects_unknown_duplicate_and_invalid_values() {
     fail "invalid effort unexpectedly succeeded"
   fi
   assert_contains "invalid CLAUDE_CODE_EFFORT_LEVEL" "$errors"
+
+  write_profile invalid \
+    'ANTHROPIC_BASE_URL=https://example.invalid/anthropic' \
+    'ANTHROPIC_AUTH_TOKEN=secret' \
+    'CLAUDE_CODE_EFFORT_LEVEL="max'
+  if run_claude_launcher "$repo" --profile invalid -- >"$errors" 2>&1; then
+    fail "unmatched profile quote unexpectedly succeeded"
+  fi
+  assert_contains "unmatched quote in Claude profile value" "$errors"
 
   write_profile invalid \
     'ANTHROPIC_BASE_URL=' \
@@ -744,7 +753,7 @@ test_menu_selects_sorted_custom_profile_and_hides_reserved_profile() {
   write_profile deepseek \
     'ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic' \
     'ANTHROPIC_AUTH_TOKEN=deepseek-secret' \
-    'ANTHROPIC_MODEL=deepseek-v4-pro[1m]'
+    'ANTHROPIC_MODEL="deepseek-v4-pro[1m]"'
   write_profile alpha \
     'ANTHROPIC_BASE_URL=https://alpha.example.invalid/anthropic' \
     'ANTHROPIC_AUTH_TOKEN=alpha-secret' \

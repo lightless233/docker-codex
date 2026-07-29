@@ -291,6 +291,22 @@ menu_select() {
   done
 }
 
+normalize_claude_profile_value() {
+  local value=$1 first last
+
+  NORMALIZED_CLAUDE_PROFILE_VALUE=$value
+  [[ -n $value ]] || return 0
+  first=${value:0:1}
+  last=${value: -1}
+  if [[ $first == \" || $first == \' || $last == \" || $last == \' ]]; then
+    ((${#value} >= 2)) &&
+      [[ $first == "$last" && ( $first == \" || $first == \' ) ]] ||
+      return 1
+    value=${value:1}
+    NORMALIZED_CLAUDE_PROFILE_VALUE=${value%?}
+  fi
+}
+
 claude_profile_model_summary() {
   local file=$1 line model sanitized
 
@@ -298,6 +314,10 @@ claude_profile_model_summary() {
     while IFS= read -r line || [[ -n $line ]]; do
       [[ $line == ANTHROPIC_MODEL=* ]] || continue
       model=${line#*=}
+      if ! normalize_claude_profile_value "$model"; then
+        break
+      fi
+      model=$NORMALIZED_CLAUDE_PROFILE_VALUE
       if [[ -n $model ]]; then
         sanitized=$(printf '%s' "$model" | LC_ALL=C tr -d '[:cntrl:]')
         if [[ -n $sanitized ]]; then
@@ -378,6 +398,9 @@ validate_claude_profile() {
     array_contains "$key" "${seen_keys[@]}" &&
       die "duplicate Claude profile key: $key"
     seen_keys+=("$key")
+    normalize_claude_profile_value "$value" ||
+      die "unmatched quote in Claude profile value: $key"
+    value=$NORMALIZED_CLAUDE_PROFILE_VALUE
 
     case $key in
       ANTHROPIC_BASE_URL)

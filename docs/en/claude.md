@@ -76,9 +76,12 @@ install -m 600 /dev/null "$profile_root/deepseek.env"
 
 A profile must be outside the checkout, owned by the invoking user, a regular
 non-symlink file, and exactly mode `0600`; use `0700` for its directory. This is
-not a shell script: do not add `export`, shell quoting, or variable expansion.
-Each non-comment line is `KEY=value`, with everything after the first `=`
-treated literally.
+not a shell script: do not add `export`; variable expansion, command
+substitution, and backslash escapes are never evaluated. Each non-comment line
+is `KEY=value`, with everything after the first `=` treated literally. A value
+may be fully enclosed by one matching pair of single or double quotes; parsing
+removes only that outer pair. Unmatched or mismatched boundary quotes are
+rejected.
 
 Only these nine keys are accepted:
 

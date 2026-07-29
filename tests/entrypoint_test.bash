@@ -284,14 +284,14 @@ test_claude_profile_policy_locale_and_arguments_are_applied() {
   : >"$log"
   make_fake_system_commands "$fake_bin"
   printf '%s\n' \
-    'ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic' \
-    'ANTHROPIC_AUTH_TOKEN=entrypoint-secret' \
-    'ANTHROPIC_MODEL=deepseek-v4-pro[1m]' \
-    'ANTHROPIC_DEFAULT_OPUS_MODEL=deepseek-v4-pro[1m]' \
-    'ANTHROPIC_DEFAULT_SONNET_MODEL=deepseek-v4-pro[1m]' \
-    'ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek-v4-flash' \
-    'CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-flash' \
-    'CLAUDE_CODE_EFFORT_LEVEL=max' >"$profile"
+    'ANTHROPIC_BASE_URL="https://api.deepseek.com/anthropic?mode=thinking"' \
+    "ANTHROPIC_AUTH_TOKEN='entrypoint=secret'" \
+    'ANTHROPIC_MODEL="deepseek-v4-pro[1m]"' \
+    "ANTHROPIC_DEFAULT_OPUS_MODEL='deepseek-v4-pro[1m]'" \
+    'ANTHROPIC_DEFAULT_SONNET_MODEL="deepseek-v4-pro[1m]"' \
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL='deepseek-v4-flash'" \
+    "CLAUDE_CODE_SUBAGENT_MODEL='deepseek-v4-flash'" \
+    'CLAUDE_CODE_EFFORT_LEVEL="max"' >"$profile"
   chmod 600 "$profile"
   printf 'container facts only\n' >"$notes"
 
@@ -308,7 +308,9 @@ test_claude_profile_policy_locale_and_arguments_are_applied() {
     "<--append-system-prompt-file>" \
     "<$notes>" \
     "<--version>"
-  assert_line "<ENV_ANTHROPIC_BASE_URL:https://api.deepseek.com/anthropic>" "$log"
+  assert_line \
+    "<ENV_ANTHROPIC_BASE_URL:https://api.deepseek.com/anthropic?mode=thinking>" \
+    "$log"
   assert_line "<ENV_AUTH_TOKEN_SET:1>" "$log"
   assert_line "<ENV_API_KEY_SET:0>" "$log"
   assert_line "<ENV_ANTHROPIC_MODEL:deepseek-v4-pro[1m]>" "$log"
@@ -326,7 +328,7 @@ test_claude_profile_policy_locale_and_arguments_are_applied() {
   assert_line "<ENV_DISABLE_ERROR_REPORTING:1>" "$log"
   assert_line "<ENV_DISABLE_FEEDBACK_COMMAND:1>" "$log"
   assert_line "<ENV_DISABLE_FEEDBACK_SURVEY:1>" "$log"
-  assert_no_line "<entrypoint-secret>" "$log"
+  assert_no_line "<entrypoint=secret>" "$log"
 }
 
 test_claude_profile_parser_rejects_unsafe_or_conflicting_content() {
@@ -384,7 +386,7 @@ test_claude_profile_parser_rejects_unsafe_or_conflicting_content() {
   printf '%s\n' \
     'ANTHROPIC_BASE_URL=https://example.invalid/anthropic' \
     'ANTHROPIC_AUTH_TOKEN=literal-secret' \
-    "ANTHROPIC_MODEL=\$(touch $marker)" >"$profile"
+    "ANTHROPIC_MODEL=\"\$(touch $marker)\"" >"$profile"
   : >"$log"
   DOCKER_AGENT_CLAUDE_CONNECTION=profile:literal \
   DOCKER_AGENT_CLAUDE_PROFILE_FILE=$profile \
@@ -393,6 +395,20 @@ test_claude_profile_parser_rejects_unsafe_or_conflicting_content() {
     run_entrypoint "$fake_bin" "$log" claude
   [[ ! -e $marker ]] || fail "literal profile command substitution was executed"
   assert_line "<ENV_ANTHROPIC_MODEL:\$(touch $marker)>" "$log"
+
+  printf '%s\n' \
+    'ANTHROPIC_BASE_URL=https://example.invalid/anthropic' \
+    'ANTHROPIC_AUTH_TOKEN=literal-secret' \
+    "ANTHROPIC_MODEL='\$(touch $marker)\"" >"$profile"
+  if DOCKER_AGENT_CLAUDE_CONNECTION=profile:invalid \
+    DOCKER_AGENT_CLAUDE_PROFILE_FILE=$profile \
+    HOST_UID=$(id -u) HOST_GID=$(id -g) \
+    FAKE_GROUP_EXISTS=1 FAKE_PASSWD_EXISTS=1 \
+      run_entrypoint "$fake_bin" "$log" claude 2>"$errors"; then
+    fail "mismatched profile quotes unexpectedly succeeded"
+  fi
+  [[ ! -e $marker ]] || fail "mismatched profile quote executed a command"
+  assert_contains "unmatched quote in Claude profile value" "$errors"
 }
 
 test_claude_profile_connection_contract_and_file_metadata_are_enforced() {
