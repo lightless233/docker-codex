@@ -22,6 +22,13 @@ run_claude_launcher() {
     run_named_launcher "$repo" "$ROOT" docker-agent claude "$@"
 }
 
+state_mount_source() {
+  local log=$1 line
+  line=$(grep -F 'target=/claude-state>' "$log")
+  line=${line#<type=bind,source=}
+  printf '%s\n' "${line%,target=/claude-state>}"
+}
+
 test_official_api_profile_is_mounted_without_secret_in_docker_args() {
   local TEST_TMP
   TEST_TMP=$(new_tmp)
@@ -272,6 +279,211 @@ test_official_api_contract_rejects_custom_endpoint_and_missing_profile() {
   assert_no_line "<run>" "$TEST_DOCKER_LOG"
 }
 
+test_same_named_repositories_get_distinct_state() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo_a="$TEST_TMP/a/test"
+  local repo_b="$TEST_TMP/b/test"
+  local state_a state_b
+  make_repo "$repo_a"
+  make_repo "$repo_b"
+  prepare_fake_runtime "$TEST_TMP"
+
+  run_claude_launcher "$repo_a" --official-subscription -- --version
+  state_a=$(state_mount_source "$TEST_DOCKER_LOG")
+
+  : >"$TEST_DOCKER_LOG"
+  run_claude_launcher "$repo_b" --official-subscription -- --version
+  state_b=$(state_mount_source "$TEST_DOCKER_LOG")
+
+  [[ $state_a != "$state_b" ]] ||
+    fail "same-named repositories shared Claude state"
+  [[ $state_a == "$TEST_AGENT_DATA_HOME/claude/repos/test-"* ]] ||
+    fail "unexpected readable repository state path: $state_a"
+  [[ $state_b == "$TEST_AGENT_DATA_HOME/claude/repos/test-"* ]] ||
+    fail "unexpected readable repository state path: $state_b"
+}
+
+test_linked_worktrees_share_repo_identity_but_not_state() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local main="$TEST_TMP/main repo"
+  local worktree="$TEST_TMP/linked tree"
+  local state_main state_linked repo_state_main repo_state_linked
+  make_repo "$main"
+  git -C "$main" worktree add -qb linked "$worktree"
+  prepare_fake_runtime "$TEST_TMP"
+
+  run_claude_launcher "$main" --official-subscription -- --version
+  state_main=$(state_mount_source "$TEST_DOCKER_LOG")
+
+  : >"$TEST_DOCKER_LOG"
+  run_claude_launcher "$worktree" --official-subscription -- --version
+  state_linked=$(state_mount_source "$TEST_DOCKER_LOG")
+
+  repo_state_main=${state_main%%/worktrees/*}
+  repo_state_linked=${state_linked%%/worktrees/*}
+  [[ $repo_state_main == "$repo_state_linked" ]] ||
+    fail "linked worktrees did not share repository identity"
+  [[ $state_main != "$state_linked" ]] ||
+    fail "linked worktrees shared Claude state"
+}
+
+test_connections_get_distinct_state_and_profile_content_reuses_state() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  local subscription_state api_state profile_state profile_state_after
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+  write_profile official-api 'ANTHROPIC_API_KEY=official-secret'
+  write_profile deepseek \
+    'ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic' \
+    'ANTHROPIC_AUTH_TOKEN=deepseek-one'
+
+  run_claude_launcher "$repo" --official-subscription -- --version
+  subscription_state=$(state_mount_source "$TEST_DOCKER_LOG")
+
+  : >"$TEST_DOCKER_LOG"
+  run_claude_launcher "$repo" --official-api -- --version
+  api_state=$(state_mount_source "$TEST_DOCKER_LOG")
+
+  : >"$TEST_DOCKER_LOG"
+  run_claude_launcher "$repo" --profile deepseek -- --version
+  profile_state=$(state_mount_source "$TEST_DOCKER_LOG")
+
+  [[ $subscription_state != "$api_state" &&
+      $subscription_state != "$profile_state" &&
+      $api_state != "$profile_state" ]] ||
+    fail "Claude connections shared state"
+  [[ $subscription_state == */official-subscription ]] ||
+    fail "subscription state has unexpected path: $subscription_state"
+  [[ $api_state == */official-api ]] ||
+    fail "official API state has unexpected path: $api_state"
+  [[ $profile_state == */profiles/deepseek ]] ||
+    fail "custom profile state has unexpected path: $profile_state"
+
+  write_profile deepseek \
+    'ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic' \
+    'ANTHROPIC_AUTH_TOKEN=deepseek-two'
+  : >"$TEST_DOCKER_LOG"
+  run_claude_launcher "$repo" --profile deepseek -- --version
+  profile_state_after=$(state_mount_source "$TEST_DOCKER_LOG")
+  [[ $profile_state == "$profile_state_after" ]] ||
+    fail "changing profile content changed its state identity"
+}
+
+test_state_identity_mismatch_fails_before_docker() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  local state errors="$TEST_TMP/errors"
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+
+  run_claude_launcher "$repo" --official-subscription -- --version
+  state=$(state_mount_source "$TEST_DOCKER_LOG")
+  printf 'wrong identity\n' >"$state/.docker-agent-identity"
+  chmod 600 "$state/.docker-agent-identity"
+  : >"$TEST_DOCKER_LOG"
+
+  if run_claude_launcher "$repo" --official-subscription -- --version \
+    >"$errors" 2>&1; then
+    fail "mismatched state identity unexpectedly succeeded"
+  fi
+
+  assert_contains "Claude state identity does not match" "$errors"
+  assert_no_line "<run>" "$TEST_DOCKER_LOG"
+}
+
+test_subscription_mounts_only_host_credential_file_readwrite() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  local claude_home="$TEST_TMP/alternate claude"
+  local state
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+  install -d -m 700 "$claude_home"
+  printf '%s\n' '{"test":"alternate"}' >"$claude_home/.credentials.json"
+  chmod 600 "$claude_home/.credentials.json"
+
+  CLAUDE_CONFIG_DIR=$claude_home \
+    run_claude_launcher "$repo" --official-subscription -- --version
+
+  state=$(state_mount_source "$TEST_DOCKER_LOG")
+  assert_line "<type=bind,source=$claude_home/.credentials.json,target=/claude-state/.credentials.json>" \
+    "$TEST_DOCKER_LOG"
+  assert_not_contains "source=$claude_home,target=/claude-state" \
+    "$TEST_DOCKER_LOG"
+  assert_line "<CLAUDE_CONFIG_DIR=/claude-state>" "$TEST_DOCKER_LOG"
+  [[ $(stat -c %a "$state") == 700 ]] ||
+    fail "Claude state directory does not have mode 700"
+  [[ $(stat -c %a "$state/.docker-agent-identity") == 600 ]] ||
+    fail "Claude state identity does not have mode 600"
+}
+
+test_subscription_rejects_macos_and_invalid_credentials_before_state() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  local claude_home="$TEST_TMP/invalid claude"
+  local errors="$TEST_TMP/errors"
+  local fake_bin="$TEST_TMP/bin"
+  local real_id
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+
+  if DOCKER_AGENT_HOST_OS=Darwin \
+    run_claude_launcher "$repo" --official-subscription -- >"$errors" 2>&1; then
+    fail "macOS subscription reuse unexpectedly succeeded"
+  fi
+  assert_contains "macOS Keychain" "$errors"
+
+  install -d -m 700 "$claude_home"
+  if CLAUDE_CONFIG_DIR=$claude_home \
+    run_claude_launcher "$repo" --official-subscription -- >"$errors" 2>&1; then
+    fail "missing OAuth credential unexpectedly succeeded"
+  fi
+  assert_contains "Claude OAuth credential does not exist" "$errors"
+
+  printf '%s\n' '{"test":"credential"}' >"$claude_home/target.json"
+  chmod 600 "$claude_home/target.json"
+  ln -s "$claude_home/target.json" "$claude_home/.credentials.json"
+  if CLAUDE_CONFIG_DIR=$claude_home \
+    run_claude_launcher "$repo" --official-subscription -- >"$errors" 2>&1; then
+    fail "symlink OAuth credential unexpectedly succeeded"
+  fi
+  assert_contains "must not be a symlink" "$errors"
+
+  rm "$claude_home/.credentials.json"
+  printf '%s\n' '{"test":"credential"}' >"$claude_home/.credentials.json"
+  chmod 640 "$claude_home/.credentials.json"
+  if CLAUDE_CONFIG_DIR=$claude_home \
+    run_claude_launcher "$repo" --official-subscription -- >"$errors" 2>&1; then
+    fail "group-readable OAuth credential unexpectedly succeeded"
+  fi
+  assert_contains "must have mode 600" "$errors"
+
+  chmod 600 "$claude_home/.credentials.json"
+  install -d -m 755 "$fake_bin"
+  real_id=$(command -v id)
+  # shellcheck disable=SC2016 # ${1:-} expands when the generated fake runs.
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'if [[ ${1:-} == -u ]]; then printf "99999\n"; exit 0; fi' \
+    "exec \"$real_id\" \"\$@\"" >"$fake_bin/id"
+  chmod 755 "$fake_bin/id"
+  if PATH="$fake_bin:$PATH" CLAUDE_CONFIG_DIR=$claude_home \
+    run_claude_launcher "$repo" --official-subscription -- >"$errors" 2>&1; then
+    fail "OAuth credential with unexpected owner identity unexpectedly succeeded"
+  fi
+  assert_contains "must be owned by the current user" "$errors"
+  assert_no_line "<run>" "$TEST_DOCKER_LOG"
+  [[ ! -e $TEST_AGENT_DATA_HOME/claude ]] ||
+    fail "invalid credential created Claude state"
+}
+
 init_tests
 test_official_api_profile_is_mounted_without_secret_in_docker_args
 test_custom_profile_validates_endpoint_and_single_credential
@@ -280,4 +492,10 @@ test_profile_name_and_selector_contracts_are_enforced
 test_profile_file_must_be_protected_regular_and_owned
 test_profile_config_home_must_not_resolve_inside_checkout
 test_official_api_contract_rejects_custom_endpoint_and_missing_profile
+test_same_named_repositories_get_distinct_state
+test_linked_worktrees_share_repo_identity_but_not_state
+test_connections_get_distinct_state_and_profile_content_reuses_state
+test_state_identity_mismatch_fails_before_docker
+test_subscription_mounts_only_host_credential_file_readwrite
+test_subscription_rejects_macos_and_invalid_credentials_before_state
 printf 'claude launcher tests: PASS\n'

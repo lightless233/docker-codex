@@ -89,11 +89,16 @@ prepare_fake_runtime() {
   TEST_CODEX_HOME="$base/codex home"
   TEST_AGENT_CONFIG_HOME="$base/agent config"
   TEST_AGENT_DATA_HOME="$base/agent data"
+  TEST_CLAUDE_HOME="$base/host claude"
   TEST_DOCKER="$base/docker"
   TEST_DOCKER_LOG="$base/docker.log"
   mkdir -p "$TEST_CODEX_HOME"
   install -d -m 700 "$TEST_AGENT_CONFIG_HOME/claude/profiles"
   install -d -m 700 "$TEST_AGENT_DATA_HOME"
+  install -d -m 700 "$TEST_CLAUDE_HOME"
+  printf '%s\n' '{"test":"credential"}' \
+    >"$TEST_CLAUDE_HOME/.credentials.json"
+  chmod 600 "$TEST_CLAUDE_HOME/.credentials.json"
   : >"$TEST_DOCKER_LOG"
   make_fake_docker "$TEST_DOCKER"
 }
@@ -101,13 +106,22 @@ prepare_fake_runtime() {
 run_named_launcher() {
   local directory=$1 project_root=$2 launcher_name=$3
   local agent_config_home=${DOCKER_AGENT_CONFIG_HOME:-$TEST_AGENT_CONFIG_HOME}
-  local agent_data_home=${DOCKER_AGENT_DATA_HOME:-}
+  local agent_data_home
+  local host_claude_home=${CLAUDE_CONFIG_DIR:-$TEST_CLAUDE_HOME}
+  if [[ -n ${DOCKER_AGENT_DATA_HOME+x} ]]; then
+    agent_data_home=$DOCKER_AGENT_DATA_HOME
+  elif [[ -n ${DOCKER_CODEX_DATA_HOME+x} ]]; then
+    agent_data_home=
+  else
+    agent_data_home=$TEST_AGENT_DATA_HOME
+  fi
   shift 3
   (
     cd "$directory"
     CODEX_HOME="$TEST_CODEX_HOME" \
       DOCKER_AGENT_CONFIG_HOME="$agent_config_home" \
       DOCKER_AGENT_DATA_HOME="$agent_data_home" \
+      CLAUDE_CONFIG_DIR="$host_claude_home" \
       DOCKER_AGENT_DOCKER_BIN="$TEST_DOCKER" \
       DOCKER_AGENT_TEST_DOCKER_LOG="$TEST_DOCKER_LOG" \
       "$project_root/$launcher_name" "$@"

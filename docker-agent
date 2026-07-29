@@ -150,6 +150,16 @@ append_same_path_mount() {
   fi
 }
 
+append_file_mount() {
+  local source=$1 target=$2 mode=${3:-rw}
+  reject_mount_comma "$source"
+  if [[ $mode == ro ]]; then
+    DOCKER_ARGS+=(--mount "type=bind,source=$source,target=$target,readonly")
+  else
+    DOCKER_ARGS+=(--mount "type=bind,source=$source,target=$target")
+  fi
+}
+
 repo_id_for() {
   printf '%s' "$1" | git hash-object --stdin | cut -c1-16
 }
@@ -323,6 +333,103 @@ resolve_claude_connection() {
   fi
 }
 
+validate_owned_mode_600_file() {
+  local file=$1 label=$2
+  [[ -e $file ]] || die "$label does not exist: $file"
+  [[ ! -L $file ]] || die "$label must not be a symlink: $file"
+  [[ -f $file ]] || die "$label must be a regular file: $file"
+  [[ $(file_uid "$file") == "$(id -u)" ]] ||
+    die "$label must be owned by the current user: $file"
+  [[ $(file_mode "$file") == 600 ]] ||
+    die "$label must have mode 600: $file"
+}
+
+resolve_claude_credential_source() {
+  local host_claude_home
+
+  [[ $CLAUDE_CONNECTION == official-subscription ]] || return 0
+  if [[ $HOST_OS == Darwin ]]; then
+    die "host Claude subscription credentials are stored in macOS Keychain; use --official-api or --profile"
+  fi
+
+  host_claude_home=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
+  CLAUDE_CREDENTIAL_PATH="$host_claude_home/.credentials.json"
+  validate_owned_mode_600_file \
+    "$CLAUDE_CREDENTIAL_PATH" "Claude OAuth credential"
+  CLAUDE_CREDENTIAL_PATH=$(
+    cd "$(dirname "$CLAUDE_CREDENTIAL_PATH")" &&
+      printf '%s/%s\n' "$(pwd -P)" "$(basename "$CLAUDE_CREDENTIAL_PATH")"
+  )
+}
+
+slug_for() {
+  local raw=$1 fallback=$2 slug
+  slug=$(LC_ALL=C printf '%s' "$raw" | tr -c 'A-Za-z0-9._-' '_' | cut -c1-48)
+  [[ -n $slug ]] || slug=$fallback
+  printf '%s\n' "$slug"
+}
+
+path_hash_for() {
+  printf '%s' "$1" | git hash-object --stdin | cut -c1-16
+}
+
+ensure_state_identity() {
+  local state_dir=$1 connection_id=$2
+  local identity="$state_dir/.docker-agent-identity"
+  local expected
+  expected=$(mktemp)
+  printf '%s\0' \
+    "$COMMON_DIR" "$CHECKOUT_ROOT" claude "$connection_id" >"$expected"
+
+  if [[ -L $identity || (-e $identity && ! -f $identity) ]]; then
+    rm -f "$expected"
+    die "Claude state identity must be a regular non-symlink file: $identity"
+  fi
+  if [[ -e $identity ]]; then
+    if [[ $(file_uid "$identity") != "$(id -u)" ||
+          $(file_mode "$identity") != 600 ]]; then
+      rm -f "$expected"
+      die "Claude state identity has unsafe metadata: $identity"
+    fi
+    cmp -s "$expected" "$identity" || {
+      rm -f "$expected"
+      die "Claude state identity does not match: $state_dir"
+    }
+  else
+    install -m 600 "$expected" "$identity"
+  fi
+  rm -f "$expected"
+}
+
+prepare_claude_state() {
+  local repo_name repo_id worktree_id state_base
+
+  if [[ $(basename "$COMMON_DIR") == .git ]]; then
+    repo_name=$(basename "$(dirname "$COMMON_DIR")")
+  else
+    repo_name=$(basename "$COMMON_DIR")
+  fi
+  repo_id="$(slug_for "$repo_name" repo)-$(path_hash_for "$COMMON_DIR")"
+  worktree_id="$(slug_for "$(basename "$CHECKOUT_ROOT")" worktree)-$(path_hash_for "$CHECKOUT_ROOT")"
+  state_base="$DATA_HOME/claude/repos/$repo_id/worktrees/$worktree_id"
+
+  case $CLAUDE_CONNECTION in
+    official-subscription|official-api)
+      CLAUDE_STATE_DIR="$state_base/$CLAUDE_CONNECTION"
+      ;;
+    profile:*)
+      CLAUDE_STATE_DIR="$state_base/profiles/${CLAUDE_CONNECTION#profile:}"
+      ;;
+    *)
+      die "unsupported Claude connection: $CLAUDE_CONNECTION"
+      ;;
+  esac
+
+  install -d -m 700 "$CLAUDE_STATE_DIR"
+  CLAUDE_STATE_DIR=$(cd "$CLAUDE_STATE_DIR" && pwd -P)
+  ensure_state_identity "$CLAUDE_STATE_DIR" "$CLAUDE_CONNECTION"
+}
+
 DOCKER_BIN=${DOCKER_AGENT_DOCKER_BIN:-${DOCKER_CODEX_DOCKER_BIN:-docker}}
 IMAGE=${DOCKER_AGENT_IMAGE:-${DOCKER_CODEX_IMAGE:-docker-agent:local}}
 HOST_OS=${DOCKER_AGENT_HOST_OS:-${DOCKER_CODEX_HOST_OS:-$(uname -s)}}
@@ -338,6 +445,8 @@ PAT_PATH=${DOCKER_AGENT_PAT_PATH:-${DOCKER_CODEX_PAT_PATH:-}}
 CLAUDE_CONNECTION=
 CLAUDE_PROFILE_NAME=
 CLAUDE_PROFILE_PATH=
+CLAUDE_CREDENTIAL_PATH=
+CLAUDE_STATE_DIR=
 AGENT_ARGS=()
 
 while (($#)); do
@@ -432,6 +541,7 @@ CHECKOUT_ROOT=$(cd "$CHECKOUT_ROOT" && pwd -P)
 
 if [[ $AGENT == claude ]]; then
   resolve_claude_connection
+  resolve_claude_credential_source
 fi
 
 COMMON_DIR=$(git rev-parse --path-format=absolute --git-common-dir)
@@ -445,6 +555,9 @@ if [[ -n $ISOLATED ]]; then
   COMMON_DIR=$(cd "$COMMON_DIR" && pwd -P)
   GIT_DIR=$(git -C "$CHECKOUT_ROOT" rev-parse --path-format=absolute --git-dir)
   GIT_DIR=$(cd "$GIT_DIR" && pwd -P)
+fi
+if [[ $AGENT == claude ]]; then
+  prepare_claude_state
 fi
 REPO_ID=$(repo_id_for "$COMMON_DIR")
 
@@ -463,6 +576,13 @@ if [[ $AGENT == codex ]]; then
   DOCKER_ARGS+=(--env "CODEX_HOME=/codex-home")
   DOCKER_ARGS+=(--mount "type=bind,source=$CODEX_HOME_SOURCE,target=/codex-home")
 else
+  reject_mount_comma "$CLAUDE_STATE_DIR"
+  DOCKER_ARGS+=(--mount "type=bind,source=$CLAUDE_STATE_DIR,target=/claude-state")
+  DOCKER_ARGS+=(--env "CLAUDE_CONFIG_DIR=/claude-state")
+  if [[ -n $CLAUDE_CREDENTIAL_PATH ]]; then
+    append_file_mount \
+      "$CLAUDE_CREDENTIAL_PATH" /claude-state/.credentials.json
+  fi
   if [[ -n $CLAUDE_PROFILE_PATH ]]; then
     reject_mount_comma "$CLAUDE_PROFILE_PATH"
     DOCKER_ARGS+=(--mount "type=bind,source=$CLAUDE_PROFILE_PATH,target=/run/docker-agent/claude-profile.env,readonly")
