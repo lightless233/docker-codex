@@ -16,10 +16,8 @@ Linux/WSL 宿主机上完成 Claude Code 登录。
 # 在源码目录构建一次共享镜像
 docker build -t docker-agent:local .
 
-# 同一个脚本按安装名称分发
-sudo install -m 0755 ./docker-agent /usr/local/bin/docker-agent
-sudo install -m 0755 ./docker-agent /usr/local/bin/docker-codex
-sudo install -m 0755 ./docker-agent /usr/local/bin/docker-claude
+# 安装 docker-agent、docker-codex 和 docker-claude
+sudo ./install.sh
 
 # 在任意 Git checkout 中启动
 cd /path/to/your-project
@@ -29,8 +27,8 @@ docker-agent claude --profile deepseek
 ```
 
 `docker-codex` 等价于 `docker-agent codex`，`docker-claude` 等价于
-`docker-agent claude`。没有 `sudo` 时，可以用同样的三条 `install` 命令
-安装到 `$HOME/.local/bin`。
+`docker-agent claude`。没有 `sudo` 时，运行
+`./install.sh --prefix "$HOME/.local"` 安装到 `$HOME/.local/bin`。
 
 `docker-agent claude` 在交互终端显示连接菜单：官方订阅/OAuth、官方 API
 key、自定义 endpoint；选择自定义 endpoint 后再显示按名称排序的 profile

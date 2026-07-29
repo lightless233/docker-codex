@@ -17,10 +17,8 @@ requires a completed Claude Code login on a Linux or WSL host.
 # Build the shared image once, from this source checkout
 docker build -t docker-agent:local .
 
-# The same script dispatches by its installed name
-sudo install -m 0755 ./docker-agent /usr/local/bin/docker-agent
-sudo install -m 0755 ./docker-agent /usr/local/bin/docker-codex
-sudo install -m 0755 ./docker-agent /usr/local/bin/docker-claude
+# Install docker-agent, docker-codex, and docker-claude
+sudo ./install.sh
 
 # Launch from any Git checkout
 cd /path/to/your-project
@@ -30,8 +28,8 @@ docker-agent claude --profile deepseek
 ```
 
 `docker-codex` is equivalent to `docker-agent codex`, and `docker-claude` is
-equivalent to `docker-agent claude`. Without `sudo`, install the same three
-names under `$HOME/.local/bin`.
+equivalent to `docker-agent claude`. Without `sudo`, run
+`./install.sh --prefix "$HOME/.local"` to install under `$HOME/.local/bin`.
 
 In an interactive terminal, `docker-agent claude` shows connection choices for
 an official subscription/OAuth login, an official API key, or a custom
