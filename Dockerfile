@@ -2,6 +2,7 @@ FROM debian:13-slim
 
 ARG NODE_VERSION=24.18.0
 ARG CODEX_VERSION=0.145.0
+ARG CLAUDE_CODE_VERSION=2.1.212
 ARG PNPM_VERSION=10.14.0
 ARG TARGETARCH
 
@@ -12,8 +13,8 @@ ENV PATH=/usr/local/cargo/bin:${PATH}
 # rustflags or `docker run -e RUSTFLAGS=...` override this.
 ENV RUSTFLAGS="-C link-arg=-fuse-ld=mold"
 
-RUN apt-get update \
-    && apt-get install --yes --no-install-recommends \
+RUN DEBIAN_FRONTEND=noninteractive apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
         bash \
         build-essential \
         ca-certificates \
@@ -25,6 +26,7 @@ RUN apt-get update \
         jq \
         libssl-dev \
         libwayland-client0 \
+        locales \
         mold \
         openssh-client \
         pkg-config \
@@ -38,6 +40,7 @@ RUN apt-get update \
         shellcheck \
         sqlite3 \
         sudo \
+        tzdata \
         unzip \
         wl-clipboard \
         xz-utils \
@@ -45,6 +48,10 @@ RUN apt-get update \
         zsh \
         gh \
     && rm -rf /var/lib/apt/lists/*
+
+RUN sed -i 's/^# *\(en_US.UTF-8 UTF-8\)$/\1/' /etc/locale.gen \
+    && locale-gen en_US.UTF-8 \
+    && locale -a | grep -Fxi en_US.utf8
 
 RUN printf '%s\n' '%sudo ALL=(ALL:ALL) NOPASSWD: ALL' \
       > /etc/sudoers.d/docker-codex \
@@ -91,12 +98,14 @@ RUN curl --proto '=https' --tlsv1.2 --silent --show-error --fail \
 
 RUN npm install --global \
         "@openai/codex@${CODEX_VERSION}" \
+        "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
         "pnpm@${PNPM_VERSION}" \
     && codex --version \
+    && claude --version \
     && pnpm --version
 
 COPY --chmod=0755 container-entrypoint /usr/local/bin/container-entrypoint
-COPY --chmod=0644 agent-notes.md /usr/local/share/docker-codex/agent-notes.md
+COPY --chmod=0644 agent-notes.md /usr/local/share/docker-agent/agent-notes.md
 COPY --chmod=0755 container-powershell-shim /usr/local/bin/powershell.exe
 
 WORKDIR /workspace

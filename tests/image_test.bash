@@ -5,8 +5,8 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 # shellcheck source=tests/testlib.bash
 source "$ROOT/tests/testlib.bash"
 
-DOCKER_BIN=${DOCKER_CODEX_DOCKER_BIN:-docker}
-IMAGE=${DOCKER_CODEX_TEST_IMAGE:-docker-codex:local}
+DOCKER_BIN=${DOCKER_AGENT_DOCKER_BIN:-${DOCKER_CODEX_DOCKER_BIN:-docker}}
+IMAGE=${DOCKER_AGENT_TEST_IMAGE:-${DOCKER_CODEX_TEST_IMAGE:-docker-agent:local}}
 
 test_debian_and_official_node_runtime() {
   "$DOCKER_BIN" image inspect "$IMAGE" >/dev/null
@@ -59,7 +59,18 @@ test_python_and_archive_tools_are_available() {
     set -euo pipefail
     command -v python3 python pip3 unzip zip >/dev/null
     python3 -m venv --help >/dev/null
-    [[ -r /usr/local/share/docker-codex/agent-notes.md ]]
+    [[ -r /usr/local/share/docker-agent/agent-notes.md ]]
+  '
+}
+
+test_claude_code_and_locale_are_installed() {
+  "$DOCKER_BIN" run --rm --entrypoint bash "$IMAGE" -lc '
+    set -euo pipefail
+    claude --version | grep -F "2.1.212" >/dev/null
+    locale -a | grep -Fxi "en_US.utf8" >/dev/null
+    LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 locale charmap |
+      grep -Fx "UTF-8" >/dev/null
+    TZ=Etc/UTC date "+%Z %z" | grep -Fx "UTC +0000" >/dev/null
   '
 }
 
@@ -115,6 +126,7 @@ init_tests
 test_debian_and_official_node_runtime
 test_runtime_user_has_passwordless_sudo_without_root_group
 test_login_shell_keeps_toolchain_on_path
+test_claude_code_and_locale_are_installed
 test_python_and_archive_tools_are_available
 test_mold_is_default_linker_and_sccache_is_available
 test_powershell_shim_reads_wayland_clipboard_image
