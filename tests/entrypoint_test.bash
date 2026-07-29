@@ -39,6 +39,8 @@ record_claude_environment() {
   printf '<ENV_DISABLE_FEEDBACK_COMMAND:%s>\n' "${DISABLE_FEEDBACK_COMMAND:-}" >>"$log"
   printf '<ENV_DISABLE_FEEDBACK_SURVEY:%s>\n' \
     "${CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY:-}" >>"$log"
+  printf '<ENV_ATTRIBUTION_HEADER:%s>\n' \
+    "${CLAUDE_CODE_ATTRIBUTION_HEADER:-}" >>"$log"
 }
 
 case $name in
@@ -328,6 +330,7 @@ test_claude_profile_policy_locale_and_arguments_are_applied() {
   assert_line "<ENV_DISABLE_ERROR_REPORTING:1>" "$log"
   assert_line "<ENV_DISABLE_FEEDBACK_COMMAND:1>" "$log"
   assert_line "<ENV_DISABLE_FEEDBACK_SURVEY:1>" "$log"
+  assert_line "<ENV_ATTRIBUTION_HEADER:0>" "$log"
   assert_no_line "<entrypoint=secret>" "$log"
 }
 
@@ -543,6 +546,7 @@ test_claude_environment_policy_does_not_change_other_commands() {
   DISABLE_ERROR_REPORTING=host-errors \
   DISABLE_FEEDBACK_COMMAND=host-feedback \
   CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=host-survey \
+  CLAUDE_CODE_ATTRIBUTION_HEADER=host-attribution \
   FAKE_GROUP_EXISTS=1 FAKE_PASSWD_EXISTS=1 \
     run_entrypoint "$fake_bin" "$log" custom-command
 
@@ -555,6 +559,7 @@ test_claude_environment_policy_does_not_change_other_commands() {
   assert_line "<ENV_DISABLE_ERROR_REPORTING:host-errors>" "$log"
   assert_line "<ENV_DISABLE_FEEDBACK_COMMAND:host-feedback>" "$log"
   assert_line "<ENV_DISABLE_FEEDBACK_SURVEY:host-survey>" "$log"
+  assert_line "<ENV_ATTRIBUTION_HEADER:host-attribution>" "$log"
 }
 
 init_tests

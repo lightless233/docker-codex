@@ -246,6 +246,7 @@ elif [[ ${1:-} == claude ]]; then
   export DISABLE_ERROR_REPORTING=1
   export DISABLE_FEEDBACK_COMMAND=1
   export CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1
+  export CLAUDE_CODE_ATTRIBUTION_HEADER=0
 
   agent_notes=${DOCKER_AGENT_AGENT_NOTES:-/usr/local/share/docker-agent/agent-notes.md}
   if [[ -r $agent_notes ]]; then

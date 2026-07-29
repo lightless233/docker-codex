@@ -329,6 +329,7 @@ test_claude_runtime_is_non_root_utc_and_en_us() {
     '[[ $DISABLE_ERROR_REPORTING == 1 ]]' \
     '[[ $DISABLE_FEEDBACK_COMMAND == 1 ]]' \
     '[[ $CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY == 1 ]]' \
+    '[[ $CLAUDE_CODE_ATTRIBUTION_HEADER == 0 ]]' \
     '[[ $(locale charmap) == UTF-8 ]]' \
     '[[ $(date "+%Z %z") == "UTC +0000" ]]' \
     '[[ ${1:-} == --dangerously-skip-permissions ]]' \
