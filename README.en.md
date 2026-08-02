@@ -58,6 +58,7 @@ docker-agent claude --official-api
 docker-agent claude --profile deepseek -- --version
 docker-agent codex --isolated issue-123
 docker-agent claude --bind /path/to/fixtures:ro --profile deepseek
+docker-agent claude --env CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000 --profile deepseek
 docker-agent codex --pat-path ~/.local/share/docker-agent/pat/github-x
 ```
 
@@ -77,6 +78,10 @@ Shared options:
 
 --bind PATH[:ro]
     Mount an absolute directory at the same path; repeatable, :ro is read-only.
+
+--env NAME[=VALUE]
+    Set a container environment variable; repeatable. Without VALUE, inherit
+    the same variable from the host.
 
 --pat TOKEN
     Provide a Git token directly; it enters shell history, so prefer --pat-path.

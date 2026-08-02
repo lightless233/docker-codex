@@ -54,6 +54,7 @@ docker-agent claude --official-api
 docker-agent claude --profile deepseek -- --version
 docker-agent codex --isolated issue-123
 docker-agent claude --bind /path/to/fixtures:ro --profile deepseek
+docker-agent claude --env CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000 --profile deepseek
 docker-agent codex --pat-path ~/.local/share/docker-agent/pat/github-x
 ```
 
@@ -73,6 +74,9 @@ docker-agent codex --pat-path ~/.local/share/docker-agent/pat/github-x
 
 --bind PATH[:ro]
     将绝对目录挂载到容器内相同路径；可重复，:ro 表示只读。
+
+--env NAME[=VALUE]
+    向容器设置环境变量；可重复。不写 VALUE 时继承同名宿主环境变量。
 
 --pat TOKEN
     直接提供 Git token；会进入 shell 历史，优先使用 --pat-path。

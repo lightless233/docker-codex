@@ -344,7 +344,7 @@ test_custom_profile_validates_endpoint_and_single_credential() {
   assert_no_line "<run>" "$TEST_DOCKER_LOG"
 }
 
-test_profile_parser_rejects_unknown_duplicate_and_invalid_values() {
+test_profile_parser_accepts_arbitrary_variables_and_rejects_invalid_syntax() {
   local TEST_TMP
   TEST_TMP=$(new_tmp)
   local repo="$TEST_TMP/repo"
@@ -352,14 +352,14 @@ test_profile_parser_rejects_unknown_duplicate_and_invalid_values() {
   make_repo "$repo"
   prepare_fake_runtime "$TEST_TMP"
 
-  write_profile invalid \
+  write_profile flexible \
     'ANTHROPIC_BASE_URL=https://example.invalid/anthropic' \
     'ANTHROPIC_AUTH_TOKEN=secret' \
-    'UNSUPPORTED_VALUE=one'
-  if run_claude_launcher "$repo" --profile invalid -- >"$errors" 2>&1; then
-    fail "unknown profile key unexpectedly succeeded"
-  fi
-  assert_contains "unsupported Claude profile key: UNSUPPORTED_VALUE" "$errors"
+    'CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000' \
+    'lowercase_variable=allowed' \
+    'CLAUDE_CODE_EFFORT_LEVEL=extreme'
+  run_claude_launcher "$repo" --profile flexible -- --version
+  : >"$TEST_DOCKER_LOG"
 
   write_profile invalid \
     'ANTHROPIC_BASE_URL=https://example.invalid/anthropic' \
@@ -369,15 +369,6 @@ test_profile_parser_rejects_unknown_duplicate_and_invalid_values() {
     fail "duplicate profile key unexpectedly succeeded"
   fi
   assert_contains "duplicate Claude profile key: ANTHROPIC_AUTH_TOKEN" "$errors"
-
-  write_profile invalid \
-    'ANTHROPIC_BASE_URL=https://example.invalid/anthropic' \
-    'ANTHROPIC_AUTH_TOKEN=secret' \
-    'CLAUDE_CODE_EFFORT_LEVEL=extreme'
-  if run_claude_launcher "$repo" --profile invalid -- >"$errors" 2>&1; then
-    fail "invalid effort unexpectedly succeeded"
-  fi
-  assert_contains "invalid CLAUDE_CODE_EFFORT_LEVEL" "$errors"
 
   write_profile invalid \
     'ANTHROPIC_BASE_URL=https://example.invalid/anthropic' \
@@ -910,7 +901,7 @@ test_profile_creator_requires_name_endpoint_key_and_interactive_terminal
 test_profile_creator_is_standalone_claude_action
 test_official_api_profile_is_mounted_without_secret_in_docker_args
 test_custom_profile_validates_endpoint_and_single_credential
-test_profile_parser_rejects_unknown_duplicate_and_invalid_values
+test_profile_parser_accepts_arbitrary_variables_and_rejects_invalid_syntax
 test_profile_name_and_selector_contracts_are_enforced
 test_profile_file_must_be_protected_regular_and_owned
 test_profile_config_home_must_not_resolve_inside_checkout

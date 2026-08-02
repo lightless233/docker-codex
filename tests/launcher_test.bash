@@ -321,6 +321,51 @@ test_bad_bind_paths_fail_before_docker_run() {
   assert_no_line "<run>" "$TEST_DOCKER_LOG"
 }
 
+test_repeatable_env_options_forward_values_and_host_variables() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+
+  DOCKER_AGENT_TEST_INHERITED_ENV='from host' \
+    run_launcher "$repo" "$ROOT" \
+      --env 'DIRECT_VALUE=one=two' \
+      --env DOCKER_AGENT_TEST_INHERITED_ENV \
+      -- status
+
+  assert_line "<DIRECT_VALUE=one=two>" "$TEST_DOCKER_LOG"
+  assert_line "<DOCKER_AGENT_TEST_INHERITED_ENV>" "$TEST_DOCKER_LOG"
+  assert_line \
+    "<DOCKER_AGENT_ENV_OVERRIDE_KEYS=DIRECT_VALUE,DOCKER_AGENT_TEST_INHERITED_ENV>" \
+    "$TEST_DOCKER_LOG"
+}
+
+test_env_option_rejects_invalid_or_unset_variables_before_docker() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  local errors="$TEST_TMP/errors"
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+
+  if run_launcher "$repo" "$ROOT" --env 'BAD-NAME=value' -- status \
+    >"$errors" 2>&1; then
+    fail "invalid environment variable name unexpectedly succeeded"
+  fi
+  assert_contains "invalid environment variable name" "$errors"
+  assert_no_line "<run>" "$TEST_DOCKER_LOG"
+
+  : >"$TEST_DOCKER_LOG"
+  if run_launcher "$repo" "$ROOT" \
+    --env DOCKER_AGENT_TEST_ENV_THAT_IS_NOT_SET -- status \
+    >"$errors" 2>&1; then
+    fail "unset inherited environment variable unexpectedly succeeded"
+  fi
+  assert_contains "host environment variable is not set" "$errors"
+  assert_no_line "<run>" "$TEST_DOCKER_LOG"
+}
+
 test_isolated_mode_creates_and_preserves_worktree() {
   local TEST_TMP
   TEST_TMP=$(new_tmp)
@@ -593,6 +638,7 @@ test_help_documents_public_interface_and_retained_worktrees() {
   assert_contains "--image IMAGE" "$output"
   assert_contains "--isolated NAME" "$output"
   assert_contains "--bind PATH[:ro]" "$output"
+  assert_contains "--env NAME[=VALUE]" "$output"
   assert_contains "--pat TOKEN" "$output"
   assert_contains "--pat-path FILE" "$output"
   assert_contains "--disable-clipboard" "$output"
@@ -633,6 +679,8 @@ test_submodule_mounts_external_git_metadata
 test_darwin_does_not_add_linux_host_gateway
 test_neutral_host_os_override_does_not_add_linux_host_gateway
 test_bad_bind_paths_fail_before_docker_run
+test_repeatable_env_options_forward_values_and_host_variables
+test_env_option_rejects_invalid_or_unset_variables_before_docker
 test_isolated_mode_creates_and_preserves_worktree
 test_isolated_mode_rejects_unsafe_names
 test_isolated_mode_rejects_detached_head

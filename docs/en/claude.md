@@ -41,6 +41,17 @@ stdout, one must be specified explicitly. Arguments after `--` pass unchanged:
 docker-agent claude --profile deepseek -- --version
 ```
 
+Use repeatable `--env` options for temporary container environment variables.
+`NAME=value` sets a literal value; `NAME` inherits that host variable and fails
+immediately when it is unset:
+
+```bash
+docker-agent claude \
+  --env CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000 \
+  --env HTTPS_PROXY \
+  --profile deepseek
+```
+
 ## Profile location and permissions
 
 The profile root is:
@@ -64,7 +75,7 @@ It refuses to overwrite an existing profile.
 On success it prints the absolute profile path and launch command, followed by
 an asterisk-framed warning to configure `ANTHROPIC_MODEL`; otherwise Claude
 Code sends its default Claude model name to the custom endpoint. Edit that file
-to add optional allowlisted fields such as model mappings. A profile can also
+to add optional fields such as model mappings. A profile can also
 be created manually:
 
 ```bash
@@ -83,23 +94,15 @@ may be fully enclosed by one matching pair of single or double quotes; parsing
 removes only that outer pair. Unmatched or mismatched boundary quotes are
 rejected.
 
-Only these nine keys are accepted:
+Keys need only match the standard environment-variable identifier format
+`[A-Za-z_][A-Za-z0-9_]*`. There is no allowlist or value validation for extra
+variables. Both the host launcher and container entrypoint independently
+validate syntax, duplicate keys, and the connection contract. Neither
+`source`s nor `eval`s a profile.
 
-```text
-ANTHROPIC_BASE_URL
-ANTHROPIC_AUTH_TOKEN
-ANTHROPIC_API_KEY
-ANTHROPIC_MODEL
-ANTHROPIC_DEFAULT_OPUS_MODEL
-ANTHROPIC_DEFAULT_SONNET_MODEL
-ANTHROPIC_DEFAULT_HAIKU_MODEL
-CLAUDE_CODE_SUBAGENT_MODEL
-CLAUDE_CODE_EFFORT_LEVEL
-```
-
-Both the host launcher and container entrypoint independently validate the
-allowlist, duplicate keys, and connection contract. Neither `source`s nor
-`eval`s a profile.
+When the same variable appears in a profile and a command-line `--env`, the
+command-line value wins. The fixed Claude container policy listed below is
+applied last and cannot be overridden by either source.
 
 ## Official API key
 
@@ -114,8 +117,8 @@ printf '%s\n' 'ANTHROPIC_API_KEY=sk-ant-replace-me' \
 ```
 
 It must use `ANTHROPIC_API_KEY` as its only credential and may not set
-`ANTHROPIC_BASE_URL` or `ANTHROPIC_AUTH_TOKEN`. Allowed model fields may still
-be included.
+`ANTHROPIC_BASE_URL` or `ANTHROPIC_AUTH_TOKEN`. Other environment variables may
+still be included.
 
 ## Custom endpoint
 
@@ -221,7 +224,8 @@ endpoint, or model instruction.
 The selected container process can read profile secrets. Its user also has
 passwordless sudo inside the container, and Claude approvals are disabled.
 Use only minimally scoped, revocable credentials and never store profiles in a
-repository.
+repository. Values passed as `--env NAME=value` are recorded in Docker's
+container configuration, so keep sensitive values in protected profiles.
 
 Remove one exact profile file:
 

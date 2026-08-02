@@ -39,6 +39,16 @@ docker-agent claude --profile deepseek
 docker-agent claude --profile deepseek -- --version
 ```
 
+需要临时注入容器环境变量时使用可重复的 `--env`。`NAME=value` 直接设置
+字面值，只有 `NAME` 时继承宿主同名变量；宿主没有设置该变量会立即报错：
+
+```bash
+docker-agent claude \
+  --env CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000 \
+  --env HTTPS_PROXY \
+  --profile deepseek
+```
+
 ## Profile 目录与权限
 
 profile 根目录是：
@@ -61,7 +71,7 @@ checkout，也不要求 Docker daemon 正在运行。同名 profile 已存在时
 
 创建完成后会输出 profile 的绝对路径和启动命令，并在星号警示框中提醒
 配置 `ANTHROPIC_MODEL`；否则 Claude Code 会向自定义 endpoint 使用默认
-Claude 模型名。如需添加模型映射等其他白名单环境变量，直接编辑输出的
+Claude 模型名。如需添加模型映射等其他环境变量，直接编辑输出的
 文件。也可以手动创建：
 
 ```bash
@@ -78,22 +88,12 @@ profile 必须位于 checkout 外，是当前用户拥有、权限精确为 `060
 的单引号或双引号完整包围，解析时只移除最外层这一对引号。单边或不匹配
 的引号会被拒绝。
 
-只允许以下九个键：
+键名只需符合普通环境变量标识符格式 `[A-Za-z_][A-Za-z0-9_]*`，不设
+白名单，也不校验额外变量的取值。宿主启动器和容器 entrypoint 都会独立
+验证格式、重复键和连接契约，且不会 `source` 或 `eval` profile。
 
-```text
-ANTHROPIC_BASE_URL
-ANTHROPIC_AUTH_TOKEN
-ANTHROPIC_API_KEY
-ANTHROPIC_MODEL
-ANTHROPIC_DEFAULT_OPUS_MODEL
-ANTHROPIC_DEFAULT_SONNET_MODEL
-ANTHROPIC_DEFAULT_HAIKU_MODEL
-CLAUDE_CODE_SUBAGENT_MODEL
-CLAUDE_CODE_EFFORT_LEVEL
-```
-
-宿主启动器和容器 entrypoint 都会独立验证白名单、重复键和连接契约，且
-不会 `source` 或 `eval` profile。
+同一个变量同时出现在 profile 和命令行 `--env` 时，`--env` 优先。下文
+列出的 Claude 容器固定策略最后应用，不允许由 profile 或 `--env` 覆盖。
 
 ## 官方 API key
 
@@ -108,8 +108,7 @@ printf '%s\n' 'ANTHROPIC_API_KEY=sk-ant-replace-me' \
 ```
 
 该 profile 必须有且仅有 `ANTHROPIC_API_KEY` 这一种凭证，不能设置
-`ANTHROPIC_BASE_URL` 或 `ANTHROPIC_AUTH_TOKEN`。模型相关白名单键仍可按需
-加入。
+`ANTHROPIC_BASE_URL` 或 `ANTHROPIC_AUTH_TOKEN`。其他环境变量仍可按需加入。
 
 ## 自定义 endpoint
 
@@ -207,7 +206,8 @@ agent notes 只描述容器事实，不包含回答语言、人格、endpoint �
 
 profile secret 对选中的容器进程可读；容器用户还拥有容器内免密 sudo，
 并且 Claude 自身审批已关闭。因此 profile 只应包含当前任务需要的最小
-权限、可撤销凭证，不要把 profile 放进仓库。
+权限、可撤销凭证，不要把 profile 放进仓库。`--env NAME=value` 的值会
+进入 Docker 容器配置，敏感值应继续放在受保护的 profile 中。
 
 删除一个 profile 使用精确文件路径：
 

@@ -35,6 +35,7 @@ load_claude_profile() {
   local line key value assignment
   local seen_keys=() assignments=()
   local has_base=0 has_auth_token=0 has_api_key=0
+  local override_keys=${DOCKER_AGENT_ENV_OVERRIDE_KEYS:-}
 
   [[ -e $file ]] || {
     printf 'docker-agent: Claude profile does not exist: %s\n' "$file" >&2
@@ -63,7 +64,7 @@ load_claude_profile() {
     }
     key=${line%%=*}
     value=${line#*=}
-    [[ $key =~ ^[A-Z][A-Z0-9_]*$ ]] || {
+    [[ $key =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || {
       printf 'docker-agent: invalid Claude profile key: %s\n' "$key" >&2
       return 1
     }
@@ -101,19 +102,6 @@ load_claude_profile() {
         }
         has_api_key=1
         ;;
-      ANTHROPIC_MODEL|ANTHROPIC_DEFAULT_OPUS_MODEL|ANTHROPIC_DEFAULT_SONNET_MODEL|ANTHROPIC_DEFAULT_HAIKU_MODEL|CLAUDE_CODE_SUBAGENT_MODEL)
-        ;;
-      CLAUDE_CODE_EFFORT_LEVEL)
-        [[ $value =~ ^(low|medium|high|xhigh|max|auto)$ ]] || {
-          printf '%s\n' \
-            'docker-agent: invalid CLAUDE_CODE_EFFORT_LEVEL' >&2
-          return 1
-        }
-        ;;
-      *)
-        printf 'docker-agent: unsupported Claude profile key: %s\n' "$key" >&2
-        return 1
-        ;;
     esac
     assignments+=("$key=$value")
   done <"$file"
@@ -133,6 +121,10 @@ load_claude_profile() {
   fi
 
   for assignment in "${assignments[@]}"; do
+    key=${assignment%%=*}
+    if [[ ,$override_keys, == *,$key,* ]]; then
+      continue
+    fi
     export "${assignment?}"
   done
 }

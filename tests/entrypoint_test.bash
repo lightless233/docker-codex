@@ -41,6 +41,10 @@ record_claude_environment() {
     "${CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY:-}" >>"$log"
   printf '<ENV_ATTRIBUTION_HEADER:%s>\n' \
     "${CLAUDE_CODE_ATTRIBUTION_HEADER:-}" >>"$log"
+  printf '<ENV_MAX_OUTPUT_TOKENS:%s>\n' \
+    "${CLAUDE_CODE_MAX_OUTPUT_TOKENS:-}" >>"$log"
+  printf '<ENV_LOWERCASE_VARIABLE:%s>\n' \
+    "${lowercase_variable:-}" >>"$log"
 }
 
 case $name in
@@ -293,12 +297,16 @@ test_claude_profile_policy_locale_and_arguments_are_applied() {
     'ANTHROPIC_DEFAULT_SONNET_MODEL="deepseek-v4-pro[1m]"' \
     "ANTHROPIC_DEFAULT_HAIKU_MODEL='deepseek-v4-flash'" \
     "CLAUDE_CODE_SUBAGENT_MODEL='deepseek-v4-flash'" \
-    'CLAUDE_CODE_EFFORT_LEVEL="max"' >"$profile"
+    'CLAUDE_CODE_EFFORT_LEVEL="extreme"' \
+    'CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000' \
+    'lowercase_variable=from-profile' >"$profile"
   chmod 600 "$profile"
   printf 'container facts only\n' >"$notes"
 
   DOCKER_AGENT_CLAUDE_CONNECTION=profile:deepseek \
   DOCKER_AGENT_CLAUDE_PROFILE_FILE=$profile \
+  DOCKER_AGENT_ENV_OVERRIDE_KEYS=CLAUDE_CODE_MAX_OUTPUT_TOKENS \
+  CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000 \
   DOCKER_AGENT_AGENT_NOTES=$notes \
   HOST_UID=$(id -u) HOST_GID=$(id -g) \
   FAKE_GROUP_EXISTS=1 FAKE_PASSWD_EXISTS=1 \
@@ -320,7 +328,9 @@ test_claude_profile_policy_locale_and_arguments_are_applied() {
   assert_line "<ENV_DEFAULT_SONNET:deepseek-v4-pro[1m]>" "$log"
   assert_line "<ENV_DEFAULT_HAIKU:deepseek-v4-flash>" "$log"
   assert_line "<ENV_SUBAGENT_MODEL:deepseek-v4-flash>" "$log"
-  assert_line "<ENV_EFFORT_LEVEL:max>" "$log"
+  assert_line "<ENV_EFFORT_LEVEL:extreme>" "$log"
+  assert_line "<ENV_MAX_OUTPUT_TOKENS:64000>" "$log"
+  assert_line "<ENV_LOWERCASE_VARIABLE:from-profile>" "$log"
   assert_line "<ENV_TZ:Etc/UTC>" "$log"
   assert_line "<ENV_LANG:en_US.UTF-8>" "$log"
   assert_line "<ENV_LC_ALL:en_US.UTF-8>" "$log"
@@ -334,7 +344,7 @@ test_claude_profile_policy_locale_and_arguments_are_applied() {
   assert_no_line "<entrypoint=secret>" "$log"
 }
 
-test_claude_profile_parser_rejects_unsafe_or_conflicting_content() {
+test_claude_profile_parser_accepts_arbitrary_literal_values() {
   local TEST_TMP
   TEST_TMP=$(new_tmp)
   local fake_bin="$TEST_TMP/bin"
@@ -347,23 +357,9 @@ test_claude_profile_parser_rejects_unsafe_or_conflicting_content() {
 
   printf '%s\n' \
     'ANTHROPIC_BASE_URL=https://example.invalid/anthropic' \
-    'ANTHROPIC_AUTH_TOKEN=unknown-key-secret' \
-    'UNSAFE_SETTING=value' >"$profile"
-  chmod 600 "$profile"
-  if DOCKER_AGENT_CLAUDE_CONNECTION=profile:invalid \
-    DOCKER_AGENT_CLAUDE_PROFILE_FILE=$profile \
-    HOST_UID=$(id -u) HOST_GID=$(id -g) \
-    FAKE_GROUP_EXISTS=1 FAKE_PASSWD_EXISTS=1 \
-      run_entrypoint "$fake_bin" "$log" claude 2>"$errors"; then
-    fail "unknown Claude profile key unexpectedly succeeded"
-  fi
-  assert_contains "unsupported Claude profile key: UNSAFE_SETTING" "$errors"
-  assert_not_contains "unknown-key-secret" "$errors"
-
-  printf '%s\n' \
-    'ANTHROPIC_BASE_URL=https://example.invalid/anthropic' \
     'ANTHROPIC_AUTH_TOKEN=one' \
     'ANTHROPIC_AUTH_TOKEN=two' >"$profile"
+  chmod 600 "$profile"
   if DOCKER_AGENT_CLAUDE_CONNECTION=profile:invalid \
     DOCKER_AGENT_CLAUDE_PROFILE_FILE=$profile \
     HOST_UID=$(id -u) HOST_GID=$(id -g) \
@@ -571,7 +567,7 @@ test_existing_user_and_package_caches_are_exported_consistently
 test_cargo_target_dir_is_scoped_per_worktree
 test_agent_notes_are_injected_into_codex_invocation
 test_claude_profile_policy_locale_and_arguments_are_applied
-test_claude_profile_parser_rejects_unsafe_or_conflicting_content
+test_claude_profile_parser_accepts_arbitrary_literal_values
 test_claude_profile_connection_contract_and_file_metadata_are_enforced
 test_claude_missing_notes_and_exit_status_are_preserved
 test_claude_environment_policy_does_not_change_other_commands

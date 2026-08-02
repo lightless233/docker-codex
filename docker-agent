@@ -35,6 +35,8 @@ Options:
   --isolated NAME         In Git, create branch codex/NAME in a retained worktree
   --bind PATH[:ro]        Bind an absolute directory at the same container path
                           (repeatable; append :ro for read-only)
+  --env NAME[=VALUE]      Set or inherit a container environment variable
+                          (repeatable; NAME without VALUE inherits from host)
   --pat TOKEN             Provide a git access token directly; stored under the
                           data home with mode 600 and mounted read-only at
                           /codex-credentials/pat (visible in shell history;
@@ -63,6 +65,8 @@ Options:
   --image IMAGE             Image to use (default: docker-agent:local)
   --isolated NAME           In Git, create branch codex/NAME in a retained worktree
   --bind PATH[:ro]          Bind an absolute directory at the same container path
+  --env NAME[=VALUE]        Set or inherit a container environment variable
+                            (repeatable; NAME without VALUE inherits from host)
   --pat TOKEN               Provide a git access token directly
   --pat-path FILE           Mount a git access token file
   --disable-clipboard       Do not forward host display sockets
@@ -163,6 +167,17 @@ append_file_mount() {
   else
     DOCKER_ARGS+=(--mount "type=bind,source=$source,target=$target")
   fi
+}
+
+validate_env_spec() {
+  local spec=$1 name
+  name=${spec%%=*}
+  [[ $name =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] ||
+    die "invalid environment variable name: $name"
+  if [[ $spec != *=* ]] && ! printenv "$name" >/dev/null 2>&1; then
+    die "host environment variable is not set: $name"
+  fi
+  VALIDATED_ENV_NAME=$name
 }
 
 repo_id_for() {
@@ -393,7 +408,7 @@ validate_claude_profile() {
     [[ $line == *=* ]] || die "invalid Claude profile assignment"
     key=${line%%=*}
     value=${line#*=}
-    [[ $key =~ ^[A-Z][A-Z0-9_]*$ ]] ||
+    [[ $key =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] ||
       die "invalid Claude profile key: $key"
     array_contains "$key" "${seen_keys[@]}" &&
       die "duplicate Claude profile key: $key"
@@ -414,15 +429,6 @@ validate_claude_profile() {
       ANTHROPIC_API_KEY)
         [[ -n $value ]] || die "empty ANTHROPIC_API_KEY"
         has_api_key=1
-        ;;
-      ANTHROPIC_MODEL|ANTHROPIC_DEFAULT_OPUS_MODEL|ANTHROPIC_DEFAULT_SONNET_MODEL|ANTHROPIC_DEFAULT_HAIKU_MODEL|CLAUDE_CODE_SUBAGENT_MODEL)
-        ;;
-      CLAUDE_CODE_EFFORT_LEVEL)
-        [[ $value =~ ^(low|medium|high|xhigh|max|auto)$ ]] ||
-          die "invalid CLAUDE_CODE_EFFORT_LEVEL"
-        ;;
-      *)
-        die "unsupported Claude profile key: $key"
         ;;
     esac
   done <"$file"
@@ -705,6 +711,8 @@ BUILD=0
 ISOLATED=
 CLIPBOARD=1
 BIND_SPECS=()
+ENV_SPECS=()
+ENV_OVERRIDE_KEYS=()
 PAT_VALUE=
 PAT_PATH=${DOCKER_AGENT_PAT_PATH:-${DOCKER_CODEX_PAT_PATH:-}}
 CLAUDE_CONNECTION=
@@ -743,6 +751,13 @@ while (($#)); do
     --bind)
       (($# >= 2)) || die "--bind requires a path"
       BIND_SPECS+=("$2")
+      shift 2
+      ;;
+    --env)
+      (($# >= 2)) || die "--env requires NAME[=VALUE]"
+      validate_env_spec "$2"
+      ENV_SPECS+=("$2")
+      ENV_OVERRIDE_KEYS+=("$VALIDATED_ENV_NAME")
       shift 2
       ;;
     --pat)
@@ -880,6 +895,19 @@ if [[ -t 0 && -t 1 ]]; then
   DOCKER_ARGS+=(-it)
 fi
 DOCKER_ARGS+=(--env "HOST_UID=$(id -u)" --env "HOST_GID=$(id -g)")
+for env_spec in "${ENV_SPECS[@]}"; do
+  DOCKER_ARGS+=(--env "$env_spec")
+done
+if ((${#ENV_OVERRIDE_KEYS[@]})); then
+  env_override_key_list=
+  for env_name in "${ENV_OVERRIDE_KEYS[@]}"; do
+    if [[ -n $env_override_key_list ]]; then
+      env_override_key_list+=,
+    fi
+    env_override_key_list+=$env_name
+  done
+  DOCKER_ARGS+=(--env "DOCKER_AGENT_ENV_OVERRIDE_KEYS=$env_override_key_list")
+fi
 append_same_path_mount "$CHECKOUT_ROOT"
 if [[ $AGENT == codex ]]; then
   CODEX_HOME_SOURCE=${CODEX_HOME:-$HOME/.codex}
