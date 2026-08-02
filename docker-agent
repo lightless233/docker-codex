@@ -37,6 +37,9 @@ Options:
                           (repeatable; append :ro for read-only)
   --env NAME[=VALUE]      Set or inherit a container environment variable
                           (repeatable; NAME without VALUE inherits from host)
+  --network NETWORK       Also connect to a Docker network (repeatable)
+  --disable-default-network
+                          Do not connect to the shared docker-agent network
   --pat TOKEN             Provide a git access token directly; stored under the
                           data home with mode 600 and mounted read-only at
                           /codex-credentials/pat (visible in shell history;
@@ -67,6 +70,9 @@ Options:
   --bind PATH[:ro]          Bind an absolute directory at the same container path
   --env NAME[=VALUE]        Set or inherit a container environment variable
                             (repeatable; NAME without VALUE inherits from host)
+  --network NETWORK        Also connect to a Docker network (repeatable)
+  --disable-default-network
+                            Do not connect to the shared docker-agent network
   --pat TOKEN               Provide a git access token directly
   --pat-path FILE           Mount a git access token file
   --disable-clipboard       Do not forward host display sockets
@@ -710,9 +716,12 @@ X11_DIR_OVERRIDE=${DOCKER_AGENT_X11_DIR:-${DOCKER_CODEX_X11_DIR:-}}
 BUILD=0
 ISOLATED=
 CLIPBOARD=1
+DEFAULT_NETWORK=docker-agent
+DEFAULT_NETWORK_ENABLED=1
 BIND_SPECS=()
 ENV_SPECS=()
 ENV_OVERRIDE_KEYS=()
+NETWORKS=()
 PAT_VALUE=
 PAT_PATH=${DOCKER_AGENT_PAT_PATH:-${DOCKER_CODEX_PAT_PATH:-}}
 CLAUDE_CONNECTION=
@@ -759,6 +768,18 @@ while (($#)); do
       ENV_SPECS+=("$2")
       ENV_OVERRIDE_KEYS+=("$VALIDATED_ENV_NAME")
       shift 2
+      ;;
+    --network)
+      (($# >= 2)) || die "--network requires a value"
+      [[ -n $2 ]] || die "--network requires a non-empty value"
+      if ! array_contains "$2" "${NETWORKS[@]}"; then
+        NETWORKS+=("$2")
+      fi
+      shift 2
+      ;;
+    --disable-default-network)
+      DEFAULT_NETWORK_ENABLED=0
+      shift
       ;;
     --pat)
       (($# >= 2)) || die "--pat requires a value"
@@ -824,6 +845,17 @@ command -v "$DOCKER_BIN" >/dev/null 2>&1 || die "docker is required"
 if [[ -n $PAT_VALUE && -n $PAT_PATH ]]; then
   die "--pat and --pat-path are mutually exclusive"
 fi
+
+for network in "${NETWORKS[@]}"; do
+  case $network in
+    host|none)
+      ((DEFAULT_NETWORK_ENABLED == 0)) ||
+        die "--network $network requires --disable-default-network"
+      ((${#NETWORKS[@]} == 1)) ||
+        die "--network $network cannot be combined with other networks"
+      ;;
+  esac
+done
 
 START_DIR=$(pwd -P)
 if CHECKOUT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null); then
@@ -891,6 +923,15 @@ fi
 REPO_ID=$(repo_id_for "$COMMON_DIR")
 
 DOCKER_ARGS=(run --rm)
+if ((DEFAULT_NETWORK_ENABLED)); then
+  DOCKER_ARGS+=(--network "$DEFAULT_NETWORK")
+fi
+for network in "${NETWORKS[@]}"; do
+  if ((DEFAULT_NETWORK_ENABLED)) && [[ $network == "$DEFAULT_NETWORK" ]]; then
+    continue
+  fi
+  DOCKER_ARGS+=(--network "$network")
+done
 if [[ -t 0 && -t 1 ]]; then
   DOCKER_ARGS+=(-it)
 fi
@@ -1038,6 +1079,20 @@ fi
 
 "$DOCKER_BIN" info >/dev/null 2>&1 ||
   die "Docker daemon is unavailable"
+
+if ((DEFAULT_NETWORK_ENABLED)); then
+  if ! "$DOCKER_BIN" network inspect "$DEFAULT_NETWORK" >/dev/null 2>&1; then
+    if ! network_create_error=$(
+      "$DOCKER_BIN" network create \
+        --driver bridge \
+        --label com.docker-agent.managed=true \
+        "$DEFAULT_NETWORK" 2>&1
+    ); then
+      "$DOCKER_BIN" network inspect "$DEFAULT_NETWORK" >/dev/null 2>&1 ||
+        die "failed to create default Docker network $DEFAULT_NETWORK: $network_create_error"
+    fi
+  fi
+fi
 
 if ((BUILD)); then
   SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)

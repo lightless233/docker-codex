@@ -4,6 +4,26 @@
 （含 WSL 下的 `powershell.exe` shim）单独记录在
 [clipboard.md](clipboard.md)。
 
+## 共享 Docker 网络
+
+Codex 和 Claude 容器默认加入持久化的 `docker-agent` bridge
+网络。启动器会在该网络不存在时自动创建，不会在 agent 退出时
+删除。其他开发服务可以加入同一网络：
+
+```bash
+docker run -d --name project-pg --network docker-agent \
+  -e POSTGRES_PASSWORD=change-me postgres:17
+```
+
+agent 容器随后可以通过 `project-pg:5432` 访问 PostgreSQL。使用可重复的
+`--network NAME` 可以同时加入其他网络；
+`--disable-default-network` 会禁用共享网络。`host` 和 `none` 是
+特殊网络模式，必须与 `--disable-default-network` 一起使用，且不能再组合
+其他网络。
+
+该默认网络在所有 docker-agent 实例之间共享；加入它的容器可以相互
+访问对方暴露的端口。
+
 ## Linux 与 WSL2
 
 入口脚本会把容器进程映射为宿主机的数值 UID/GID，并通过 Docker 的

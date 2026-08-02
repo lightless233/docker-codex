@@ -35,6 +35,11 @@ docker-agent claude --profile deepseek
 equivalent to `docker-agent claude`. Without `sudo`, run
 `./install.sh --prefix "$HOME/.local"` to install under `$HOME/.local/bin`.
 
+The launcher creates and joins a shared `docker-agent` bridge network by
+default. To make a development service such as PostgreSQL available to an
+agent, start that service with `--network docker-agent`, then connect to it by
+container name from the agent.
+
 In an interactive terminal, `docker-agent claude` shows connection choices for
 an official subscription/OAuth login, an official API key, or a custom
 endpoint. The custom choice opens a second, name-sorted profile menu. Scripts
@@ -60,6 +65,8 @@ docker-agent codex --isolated issue-123
 docker-agent claude --bind /path/to/fixtures:ro --profile deepseek
 docker-agent claude --env CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000 --profile deepseek
 docker-agent codex --pat-path ~/.local/share/docker-agent/pat/github-x
+docker run -d --name project-pg --network docker-agent -e POSTGRES_PASSWORD=change-me postgres:17
+docker-agent codex --network another-development-network
 ```
 
 ## Command-line options
@@ -82,6 +89,14 @@ Shared options:
 --env NAME[=VALUE]
     Set a container environment variable; repeatable. Without VALUE, inherit
     the same variable from the host.
+
+--network NETWORK
+    Join another Docker network in addition to the default docker-agent
+    network; repeatable.
+
+--disable-default-network
+    Do not create or join the shared docker-agent network. When no other
+    network is selected, Docker uses its built-in bridge network.
 
 --pat TOKEN
     Provide a Git token directly; it enters shell history, so prefer --pat-path.

@@ -366,6 +366,99 @@ test_env_option_rejects_invalid_or_unset_variables_before_docker() {
   assert_no_line "<run>" "$TEST_DOCKER_LOG"
 }
 
+test_default_network_is_created_once_and_used_by_both_agents() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+
+  run_named_launcher "$repo" "$ROOT" docker-codex -- status
+
+  assert_contiguous_lines "$TEST_DOCKER_LOG" \
+    "CALL" "<network>" "<inspect>" "<docker-agent>"
+  assert_contiguous_lines "$TEST_DOCKER_LOG" \
+    "CALL" "<network>" "<create>" "<--driver>" "<bridge>" \
+    "<--label>" "<com.docker-agent.managed=true>" "<docker-agent>"
+  assert_contiguous_lines "$TEST_DOCKER_LOG" \
+    "<run>" "<--rm>" "<--network>" "<docker-agent>"
+
+  : >"$TEST_DOCKER_LOG"
+  run_named_launcher "$repo" "$ROOT" docker-claude \
+    --official-subscription -- --version
+
+  assert_contiguous_lines "$TEST_DOCKER_LOG" \
+    "CALL" "<network>" "<inspect>" "<docker-agent>"
+  assert_no_line "<create>" "$TEST_DOCKER_LOG"
+  assert_contiguous_lines "$TEST_DOCKER_LOG" \
+    "<run>" "<--rm>" "<--network>" "<docker-agent>"
+}
+
+test_repeatable_networks_are_additive_and_default_can_be_disabled() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+
+  run_named_launcher "$repo" "$ROOT" docker-codex \
+    --network docker-agent --network AAA --network AAA --network BBB -- status
+
+  assert_contiguous_lines "$TEST_DOCKER_LOG" \
+    "<run>" "<--rm>" \
+    "<--network>" "<docker-agent>" \
+    "<--network>" "<AAA>" \
+    "<--network>" "<BBB>"
+  [[ $(grep -Fxc -- "<--network>" "$TEST_DOCKER_LOG") == 3 ]] ||
+    fail "duplicate Docker network arguments were not removed"
+
+  : >"$TEST_DOCKER_LOG"
+  run_named_launcher "$repo" "$ROOT" docker-claude \
+    --disable-default-network --network AAA \
+    --official-subscription -- --version
+
+  assert_no_contiguous_lines "$TEST_DOCKER_LOG" \
+    "CALL" "<network>" "<inspect>" "<docker-agent>"
+  assert_no_line "<docker-agent>" "$TEST_DOCKER_LOG"
+  assert_contiguous_lines "$TEST_DOCKER_LOG" \
+    "<run>" "<--rm>" "<--network>" "<AAA>"
+
+  : >"$TEST_DOCKER_LOG"
+  run_named_launcher "$repo" "$ROOT" docker-codex \
+    --disable-default-network -- status
+
+  assert_no_line "<--network>" "$TEST_DOCKER_LOG"
+  assert_no_line "<docker-agent>" "$TEST_DOCKER_LOG"
+}
+
+test_special_network_modes_require_disabling_the_default_network() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  local errors="$TEST_TMP/errors"
+  local special_network
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+
+  for special_network in host none; do
+    if run_named_launcher "$repo" "$ROOT" docker-codex \
+      --network "$special_network" -- status >"$errors" 2>&1; then
+      fail "special network unexpectedly combined with default: $special_network"
+    fi
+    assert_contains \
+      "--network $special_network requires --disable-default-network" \
+      "$errors"
+    assert_no_line "<run>" "$TEST_DOCKER_LOG"
+    : >"$TEST_DOCKER_LOG"
+  done
+
+  run_named_launcher "$repo" "$ROOT" docker-codex \
+    --disable-default-network --network host -- status
+
+  assert_contiguous_lines "$TEST_DOCKER_LOG" \
+    "<run>" "<--rm>" "<--network>" "<host>"
+}
+
 test_isolated_mode_creates_and_preserves_worktree() {
   local TEST_TMP
   TEST_TMP=$(new_tmp)
@@ -639,6 +732,8 @@ test_help_documents_public_interface_and_retained_worktrees() {
   assert_contains "--isolated NAME" "$output"
   assert_contains "--bind PATH[:ro]" "$output"
   assert_contains "--env NAME[=VALUE]" "$output"
+  assert_contains "--network NETWORK" "$output"
+  assert_contains "--disable-default-network" "$output"
   assert_contains "--pat TOKEN" "$output"
   assert_contains "--pat-path FILE" "$output"
   assert_contains "--disable-clipboard" "$output"
@@ -681,6 +776,9 @@ test_neutral_host_os_override_does_not_add_linux_host_gateway
 test_bad_bind_paths_fail_before_docker_run
 test_repeatable_env_options_forward_values_and_host_variables
 test_env_option_rejects_invalid_or_unset_variables_before_docker
+test_default_network_is_created_once_and_used_by_both_agents
+test_repeatable_networks_are_additive_and_default_can_be_disabled
+test_special_network_modes_require_disabling_the_default_network
 test_isolated_mode_creates_and_preserves_worktree
 test_isolated_mode_rejects_unsafe_names
 test_isolated_mode_rejects_detached_head

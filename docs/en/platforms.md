@@ -4,6 +4,26 @@ This page covers platform differences and caveats on Linux/WSL2 and macOS
 hosts. Clipboard forwarding (including the `powershell.exe` shim on WSL) is
 documented separately in [clipboard.md](clipboard.md).
 
+## Shared Docker network
+
+Codex and Claude containers join a persistent `docker-agent` bridge network by
+default. The launcher creates it when missing and does not remove it when the
+agent exits. Other development services can join the same network:
+
+```bash
+docker run -d --name project-pg --network docker-agent \
+  -e POSTGRES_PASSWORD=change-me postgres:17
+```
+
+The agent can then reach PostgreSQL at `project-pg:5432`. Repeat
+`--network NAME` to join additional networks, or use
+`--disable-default-network` to skip the shared network. The special `host` and
+`none` modes require `--disable-default-network` and cannot be combined with
+other networks.
+
+The default network is shared by every docker-agent instance. Containers that
+join it can reach ports exposed by other members of that network.
+
 ## Linux and WSL2
 
 The entrypoint maps the container process to the host numeric UID/GID and adds

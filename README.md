@@ -34,6 +34,10 @@ docker-agent claude --profile deepseek
 `docker-agent claude`。没有 `sudo` 时，运行
 `./install.sh --prefix "$HOME/.local"` 安装到 `$HOME/.local/bin`。
 
+启动器默认创建并加入共享的 `docker-agent` bridge 网络。需要让
+PostgreSQL 等开发服务被 agent 访问时，启动该容器时同样指定
+`--network docker-agent`，然后在 agent 内通过容器名访问。
+
 `docker-agent claude` 在交互终端显示连接菜单：官方订阅/OAuth、官方 API
 key、自定义 endpoint；选择自定义 endpoint 后再显示按名称排序的 profile
 菜单，并在名称后显示 `ANTHROPIC_MODEL`；未配置主模型时会显示原因明确的
@@ -56,6 +60,8 @@ docker-agent codex --isolated issue-123
 docker-agent claude --bind /path/to/fixtures:ro --profile deepseek
 docker-agent claude --env CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000 --profile deepseek
 docker-agent codex --pat-path ~/.local/share/docker-agent/pat/github-x
+docker run -d --name project-pg --network docker-agent -e POSTGRES_PASSWORD=change-me postgres:17
+docker-agent codex --network another-development-network
 ```
 
 ## 命令行选项
@@ -77,6 +83,13 @@ docker-agent codex --pat-path ~/.local/share/docker-agent/pat/github-x
 
 --env NAME[=VALUE]
     向容器设置环境变量；可重复。不写 VALUE 时继承同名宿主环境变量。
+
+--network NETWORK
+    在默认 docker-agent 网络之外再加入指定 Docker 网络；可重复。
+
+--disable-default-network
+    不创建、不加入共享的 docker-agent 网络。未另外指定网络时，
+    Docker 使用内置 bridge 网络。
 
 --pat TOKEN
     直接提供 Git token；会进入 shell 历史，优先使用 --pat-path。

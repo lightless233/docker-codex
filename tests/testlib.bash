@@ -34,6 +34,41 @@ assert_not_contains() {
   fi
 }
 
+contains_contiguous_lines() {
+  local file=$1
+  shift
+  local expected=("$@")
+  local matched=0 line
+
+  ((${#expected[@]})) || return 0
+  while IFS= read -r line; do
+    if [[ $line == "${expected[$matched]}" ]]; then
+      matched=$((matched + 1))
+      ((matched == ${#expected[@]})) && return 0
+    elif [[ $line == "${expected[0]}" ]]; then
+      matched=1
+    else
+      matched=0
+    fi
+  done <"$file"
+  return 1
+}
+
+assert_contiguous_lines() {
+  local file=$1
+  shift
+  contains_contiguous_lines "$file" "$@" ||
+    fail "missing contiguous lines <$*> in $file"
+}
+
+assert_no_contiguous_lines() {
+  local file=$1
+  shift
+  if contains_contiguous_lines "$file" "$@"; then
+    fail "unexpected contiguous lines <$*> in $file"
+  fi
+}
+
 assert_ordered_lines() {
   local file=$1
   shift
@@ -77,6 +112,20 @@ log=${DOCKER_AGENT_TEST_DOCKER_LOG:-${DOCKER_CODEX_TEST_DOCKER_LOG:?}}
 printf 'CALL\n' >>"$log"
 printf '<%s>\n' "$@" >>"$log"
 case ${1:-} in
+  network)
+    network_state="${log}.networks"
+    case ${2:-} in
+      inspect)
+        grep -Fqx -- "${3:-}" "$network_state" 2>/dev/null
+        ;;
+      create)
+        network_name=${!#}
+        printf '%s\n' "$network_name" >>"$network_state"
+        ;;
+      *) exit 2 ;;
+    esac
+    exit 0
+    ;;
   info|image|build|run) exit 0 ;;
 esac
 exit 2
