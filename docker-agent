@@ -40,6 +40,7 @@ Options:
   --network NETWORK       Also connect to a Docker network (repeatable)
   --disable-default-network
                           Do not connect to the shared docker-agent network
+  --host-docker           Give the agent full control of the host Docker daemon
   --pat TOKEN             Provide a git access token directly; stored under the
                           data home with mode 600 and mounted read-only at
                           /codex-credentials/pat (visible in shell history;
@@ -73,6 +74,7 @@ Options:
   --network NETWORK        Also connect to a Docker network (repeatable)
   --disable-default-network
                             Do not connect to the shared docker-agent network
+  --host-docker             Give the agent full control of the host Docker daemon
   --pat TOKEN               Provide a git access token directly
   --pat-path FILE           Mount a git access token file
   --disable-clipboard       Do not forward host display sockets
@@ -130,6 +132,14 @@ file_uid() {
   fi
 }
 
+file_gid() {
+  if stat -c %g "$1" >/dev/null 2>&1; then
+    stat -c %g "$1"
+  else
+    stat -f %g "$1"
+  fi
+}
+
 file_mode() {
   if stat -c %a "$1" >/dev/null 2>&1; then
     stat -c %a "$1"
@@ -184,6 +194,25 @@ validate_env_spec() {
     die "host environment variable is not set: $name"
   fi
   VALIDATED_ENV_NAME=$name
+}
+
+warn_host_docker() {
+  cat >&2 <<'EOF'
+================================================================================
+WARNING: HOST DOCKER ACCESS ENABLED / 已启用宿主 Docker 控制
+
+This agent has root-level control of the Docker host.
+该 agent 现在拥有对宿主 Docker 的 root 级控制权。
+
+It can inspect, start, stop, or delete any host container, image, network, and
+volume. It can also mount arbitrary host paths and read or modify host files.
+它可以操作所有宿主容器、镜像、网络和卷，也可以挂载任意宿主路径并
+读写宿主文件。
+
+Only use this option with a trusted repository and trusted instructions.
+仅在信任当前仓库和指令时使用此选项。
+================================================================================
+EOF
 }
 
 repo_id_for() {
@@ -718,6 +747,8 @@ ISOLATED=
 CLIPBOARD=1
 DEFAULT_NETWORK=docker-agent
 DEFAULT_NETWORK_ENABLED=1
+HOST_DOCKER=0
+DOCKER_SOCKET=${DOCKER_AGENT_DOCKER_SOCKET:-/var/run/docker.sock}
 BIND_SPECS=()
 ENV_SPECS=()
 ENV_OVERRIDE_KEYS=()
@@ -779,6 +810,10 @@ while (($#)); do
       ;;
     --disable-default-network)
       DEFAULT_NETWORK_ENABLED=0
+      shift
+      ;;
+    --host-docker)
+      HOST_DOCKER=1
       shift
       ;;
     --pat)
@@ -856,6 +891,17 @@ for network in "${NETWORKS[@]}"; do
       ;;
   esac
 done
+
+if ((HOST_DOCKER)); then
+  [[ $DOCKER_SOCKET == /* ]] ||
+    die "Docker socket path must be absolute: $DOCKER_SOCKET"
+  [[ -e $DOCKER_SOCKET ]] ||
+    die "Docker socket does not exist: $DOCKER_SOCKET"
+  [[ -S $DOCKER_SOCKET ]] ||
+    die "Docker socket path is not a Unix socket: $DOCKER_SOCKET"
+  reject_mount_comma "$DOCKER_SOCKET"
+  DOCKER_SOCKET_GID=$(file_gid "$DOCKER_SOCKET")
+fi
 
 START_DIR=$(pwd -P)
 if CHECKOUT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null); then
@@ -936,6 +982,11 @@ if [[ -t 0 && -t 1 ]]; then
   DOCKER_ARGS+=(-it)
 fi
 DOCKER_ARGS+=(--env "HOST_UID=$(id -u)" --env "HOST_GID=$(id -g)")
+if ((HOST_DOCKER)); then
+  DOCKER_ARGS+=(--env "HOST_DOCKER_GID=$DOCKER_SOCKET_GID")
+  DOCKER_ARGS+=(--env "DOCKER_HOST=unix:///var/run/docker.sock")
+  DOCKER_ARGS+=(--mount "type=bind,source=$DOCKER_SOCKET,target=/var/run/docker.sock")
+fi
 for env_spec in "${ENV_SPECS[@]}"; do
   DOCKER_ARGS+=(--env "$env_spec")
 done
@@ -1075,6 +1126,10 @@ if ((CLIPBOARD)); then
       fi
     fi
   fi
+fi
+
+if ((HOST_DOCKER)); then
+  warn_host_docker
 fi
 
 "$DOCKER_BIN" info >/dev/null 2>&1 ||

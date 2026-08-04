@@ -49,6 +49,13 @@ record_claude_environment() {
 
 case $name in
   getent)
+    if [[ $1 == group && -n ${HOST_DOCKER_GID:-} && $2 == "$HOST_DOCKER_GID" ]]; then
+      if [[ ${FAKE_DOCKER_GROUP_EXISTS:-0} == 1 ]]; then
+        printf 'docker-existing:x:%s:\n' "$2"
+        exit 0
+      fi
+      exit 2
+    fi
     if [[ $1 == group && ${FAKE_GROUP_EXISTS:-0} == 1 ]]; then
       printf 'existing:x:%s:\n' "$2"
       exit 0
@@ -69,6 +76,10 @@ case $name in
     fi
     exec "$@"
     ;;
+  setpriv)
+    shift 4
+    exec "$@"
+    ;;
   claude)
     record_claude_environment
     exit "${FAKE_FINAL_STATUS:-0}"
@@ -87,7 +98,7 @@ esac
 exit 2
 EOF
   chmod +x "$fake_bin/fake-command"
-  for command in getent groupadd useradd usermod mkdir chown gosu codex claude custom-command; do
+  for command in getent groupadd useradd usermod mkdir chown gosu setpriv codex claude custom-command; do
     ln -s fake-command "$fake_bin/$command"
   done
 }
@@ -150,6 +161,36 @@ test_existing_gid_is_reused_and_existing_uid_skips_user_creation() {
   assert_line "<sudo>" "$log"
   assert_line "<existing>" "$log"
   assert_no_line "<login>" "$log"
+}
+
+test_host_docker_gid_adds_runtime_user_to_socket_group() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local fake_bin="$TEST_TMP/bin"
+  local log="$TEST_TMP/system.log"
+  : >"$log"
+  make_fake_system_commands "$fake_bin"
+
+  HOST_UID=1000 HOST_GID=1000 HOST_DOCKER_GID=34567 \
+    FAKE_GROUP_EXISTS=1 FAKE_PASSWD_EXISTS=1 \
+    FAKE_DOCKER_GROUP_EXISTS=0 \
+    run_entrypoint "$fake_bin" "$log" custom-command
+
+  assert_contiguous_lines "$log" \
+    "<CALL:groupadd>" "<--gid>" "<34567>" "<docker-host>"
+  assert_contiguous_lines "$log" \
+    "<CALL:usermod>" "<--append>" "<--groups>" "<docker-host>" "<existing>"
+
+  : >"$log"
+  HOST_UID=1000 HOST_GID=1000 HOST_DOCKER_GID=34567 \
+    FAKE_GROUP_EXISTS=1 FAKE_PASSWD_EXISTS=1 \
+    FAKE_DOCKER_GROUP_EXISTS=1 \
+    run_entrypoint "$fake_bin" "$log" custom-command
+
+  assert_no_contiguous_lines "$log" \
+    "<CALL:groupadd>" "<--gid>" "<34567>" "<docker-host>"
+  assert_contiguous_lines "$log" \
+    "<CALL:usermod>" "<--append>" "<--groups>" "<docker-existing>" "<existing>"
 }
 
 test_login_failure_warns_but_still_runs_codex() {
@@ -561,6 +602,7 @@ test_claude_environment_policy_does_not_change_other_commands() {
 init_tests
 test_missing_uid_and_gid_are_created_without_touching_shared_mounts
 test_existing_gid_is_reused_and_existing_uid_skips_user_creation
+test_host_docker_gid_adds_runtime_user_to_socket_group
 test_login_failure_warns_but_still_runs_codex
 test_final_command_exit_status_is_preserved
 test_existing_user_and_package_caches_are_exported_consistently

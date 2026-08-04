@@ -24,6 +24,16 @@ test_debian_and_official_node_runtime() {
   '
 }
 
+test_docker_client_tools_are_available_without_a_daemon() {
+  "$DOCKER_BIN" run --rm --entrypoint bash "$IMAGE" -lc '
+    set -euo pipefail
+    docker --version | grep -F "Docker version" >/dev/null
+    docker buildx version | grep -F "github.com/docker/buildx" >/dev/null
+    docker compose version | grep -F "Docker Compose version" >/dev/null
+    ! command -v dockerd
+  '
+}
+
 test_runtime_user_has_passwordless_sudo_without_root_group() {
   # shellcheck disable=SC2016 # Variables expand inside the container.
   "$DOCKER_BIN" run --rm \
@@ -61,6 +71,23 @@ test_python_and_archive_tools_are_available() {
     python3 -m venv --help >/dev/null
     [[ -r /usr/local/share/docker-agent/agent-notes.md ]]
   '
+}
+
+test_runtime_user_keeps_host_docker_supplementary_group() {
+  # This catches credential switches that preserve UID/GID but discard the
+  # supplementary group needed to open the mounted Docker socket.
+  # shellcheck disable=SC2016 # Variables expand inside the container.
+  "$DOCKER_BIN" run --rm \
+    --env HOST_UID=12345 \
+    --env HOST_GID=23456 \
+    --env HOST_DOCKER_GID=34567 \
+    "$IMAGE" \
+    bash -lc '
+      set -euo pipefail
+      [[ $(id -u) == 12345 ]]
+      [[ $(id -g) == 23456 ]]
+      id -G | tr " " "\n" | grep -qx 34567
+    '
 }
 
 test_agent_notes_are_readable_by_runtime_user() {
@@ -397,7 +424,9 @@ test_powershell_shim_reads_wayland_clipboard_image() {
 
 init_tests
 test_debian_and_official_node_runtime
+test_docker_client_tools_are_available_without_a_daemon
 test_runtime_user_has_passwordless_sudo_without_root_group
+test_runtime_user_keeps_host_docker_supplementary_group
 test_login_shell_keeps_toolchain_on_path
 test_claude_code_and_locale_are_installed
 test_wl_paste_shim_converts_bmp_clipboard_to_png

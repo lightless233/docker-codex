@@ -12,6 +12,17 @@ mount_source_for_target() {
   printf '%s\n' "${line%%,target=*}"
 }
 
+make_unix_socket_file() {
+  python3 - "$1" <<'PY'
+import socket
+import sys
+
+sock = socket.socket(socket.AF_UNIX)
+sock.bind(sys.argv[1])
+sock.close()
+PY
+}
+
 test_canonical_and_compatibility_entrypoints_dispatch_agents() {
   local TEST_TMP
   TEST_TMP=$(new_tmp)
@@ -459,6 +470,69 @@ test_special_network_modes_require_disabling_the_default_network() {
     "<run>" "<--rm>" "<--network>" "<host>"
 }
 
+test_host_docker_is_opt_in_warns_and_mounts_the_daemon_socket() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  local socket="$TEST_TMP/docker.sock"
+  local errors="$TEST_TMP/errors"
+  local socket_gid
+  make_repo "$repo"
+  make_unix_socket_file "$socket"
+  socket_gid=$(file_gid "$socket")
+  prepare_fake_runtime "$TEST_TMP"
+
+  DOCKER_AGENT_DOCKER_SOCKET=$socket \
+    run_named_launcher "$repo" "$ROOT" docker-codex -- status 2>"$errors"
+
+  assert_no_line "<type=bind,source=$socket,target=/var/run/docker.sock>" \
+    "$TEST_DOCKER_LOG"
+  assert_no_line "<HOST_DOCKER_GID=$socket_gid>" "$TEST_DOCKER_LOG"
+  assert_not_contains "HOST DOCKER ACCESS ENABLED" "$errors"
+
+  : >"$TEST_DOCKER_LOG"
+  : >"$errors"
+  DOCKER_AGENT_DOCKER_SOCKET=$socket \
+    run_named_launcher "$repo" "$ROOT" docker-claude \
+      --host-docker --official-subscription -- --version 2>"$errors"
+
+  assert_line "<type=bind,source=$socket,target=/var/run/docker.sock>" \
+    "$TEST_DOCKER_LOG"
+  assert_line "<HOST_DOCKER_GID=$socket_gid>" "$TEST_DOCKER_LOG"
+  assert_line "<DOCKER_HOST=unix:///var/run/docker.sock>" "$TEST_DOCKER_LOG"
+  assert_contains "HOST DOCKER ACCESS ENABLED" "$errors"
+  assert_contains "root-level control of the Docker host" "$errors"
+  assert_contains "mount arbitrary host paths" "$errors"
+}
+
+test_host_docker_rejects_a_missing_or_non_socket_path_before_run() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  local regular_file="$TEST_TMP/not-a-socket"
+  local errors="$TEST_TMP/errors"
+  make_repo "$repo"
+  : >"$regular_file"
+  prepare_fake_runtime "$TEST_TMP"
+
+  if DOCKER_AGENT_DOCKER_SOCKET="$TEST_TMP/missing.sock" \
+    run_named_launcher "$repo" "$ROOT" docker-codex \
+      --host-docker -- status >"$errors" 2>&1; then
+    fail "missing Docker socket unexpectedly accepted"
+  fi
+  assert_contains "Docker socket does not exist" "$errors"
+  assert_no_line "<run>" "$TEST_DOCKER_LOG"
+
+  : >"$TEST_DOCKER_LOG"
+  if DOCKER_AGENT_DOCKER_SOCKET=$regular_file \
+    run_named_launcher "$repo" "$ROOT" docker-codex \
+      --host-docker -- status >"$errors" 2>&1; then
+    fail "regular file unexpectedly accepted as Docker socket"
+  fi
+  assert_contains "Docker socket path is not a Unix socket" "$errors"
+  assert_no_line "<run>" "$TEST_DOCKER_LOG"
+}
+
 test_isolated_mode_creates_and_preserves_worktree() {
   local TEST_TMP
   TEST_TMP=$(new_tmp)
@@ -734,6 +808,7 @@ test_help_documents_public_interface_and_retained_worktrees() {
   assert_contains "--env NAME[=VALUE]" "$output"
   assert_contains "--network NETWORK" "$output"
   assert_contains "--disable-default-network" "$output"
+  assert_contains "--host-docker" "$output"
   assert_contains "--pat TOKEN" "$output"
   assert_contains "--pat-path FILE" "$output"
   assert_contains "--disable-clipboard" "$output"
@@ -779,6 +854,8 @@ test_env_option_rejects_invalid_or_unset_variables_before_docker
 test_default_network_is_created_once_and_used_by_both_agents
 test_repeatable_networks_are_additive_and_default_can_be_disabled
 test_special_network_modes_require_disabling_the_default_network
+test_host_docker_is_opt_in_warns_and_mounts_the_daemon_socket
+test_host_docker_rejects_a_missing_or_non_socket_path_before_run
 test_isolated_mode_creates_and_preserves_worktree
 test_isolated_mode_rejects_unsafe_names
 test_isolated_mode_rejects_detached_head

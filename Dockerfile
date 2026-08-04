@@ -104,6 +104,15 @@ RUN npm install --global \
     && claude --version \
     && pnpm --version
 
+# Keep Docker client tooling in its own late layer. Changing these packages
+# should not invalidate the more expensive Node, Rust, Codex, and Claude layers.
+RUN DEBIAN_FRONTEND=noninteractive apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
+        docker-buildx \
+        docker-cli \
+        docker-compose \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --chmod=0755 container-entrypoint /usr/local/bin/container-entrypoint
 RUN install -d -m 0755 /usr/local/share/docker-agent
 COPY --chmod=0644 agent-notes.md /usr/local/share/docker-agent/agent-notes.md

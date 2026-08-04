@@ -19,7 +19,8 @@ bind mount 中创建的文件仍属于宿主用户。
 
 Codex 固定使用 `--yolo`；Claude 固定使用
 `--dangerously-skip-permissions`。两者的内部审批都会关闭，所有读写挂载
-完整暴露给 agent，Docker 是外层隔离边界。启动器不会使用 `--privileged`。
+完整暴露给 agent。默认模式下 Docker 是外层隔离边界。启动器不会使用
+`--privileged`。
 
 Codex 收到完整的宿主 Codex home。Claude 不收到完整 `~/.claude`：官方
 订阅只挂载单个 `.credentials.json`，API/custom 只挂载选中的 profile，
@@ -35,8 +36,25 @@ Codex 收到完整的宿主 Codex home。Claude 不收到完整 `~/.claude`：�
 - SSH/GPG agent 或私钥
 - 无关仓库
 
+## 显式的宿主 Docker 权限
+
+`--host-docker` 会把宿主 Docker Unix socket 挂载到容器内的
+`/var/run/docker.sock`，设置 `DOCKER_HOST`，并把运行用户加入 socket 的
+数值 GID。启动器会在每次启用时输出中英双语的大幅警告。
+
+这相当于把宿主 Docker API 的完整控制权交给 agent：它不仅能操作所有宿主
+容器、镜像、网络和卷，还能创建容器并挂载任意宿主路径，从而读写宿主文件。
+因此该权限在实际效果上等同于宿主 root 权限。把 socket 以只读 bind mount
+挂载也不会把 Docker API 变成只读，所以本项目没有提供这种伪隔离模式。
+
+该选项不会挂载宿主 `~/.docker`。默认 socket 是
+`/var/run/docker.sock`；特殊环境可通过宿主环境变量
+`DOCKER_AGENT_DOCKER_SOCKET` 指定其他绝对路径。由 agent 创建的容器不会
+自动加入 `docker-agent` 网络；需要互通时，创建容器时应显式指定
+`--network docker-agent`。
+
 所选 agent 可以自由修改所有被明确以读写方式挂载的路径。除此之外的内容仍由
-Docker 隔离。
+Docker 隔离；启用 `--host-docker` 后不再具有这层宿主隔离。
 
 ---
 

@@ -11,9 +11,11 @@ The image uses Debian 13 slim and installs Node.js 24.18.0 LTS from the
 official nodejs.org linux-x64/linux-arm64 archive after checking it against
 the release's `SHASUMS256.txt`. It also contains pnpm, Rust stable (with
 rustfmt and clippy), Codex CLI, Git, Python 3 (pip and venv), common native
-build dependencies, Claude Code, and shell utilities useful during agentic
-development. The image generates the `en_US.UTF-8` locale. An
-`/etc/profile.d` entry keeps Cargo and pnpm on PATH for login shells.
+build dependencies, Claude Code, Docker CLI, Buildx, Compose, and shell
+utilities useful during agentic development. It ships Docker clients only,
+not `dockerd`; they can reach the host daemon only when `--host-docker`
+explicitly mounts its Unix socket. The image generates the `en_US.UTF-8`
+locale. An `/etc/profile.d` entry keeps Cargo and pnpm on PATH for login shells.
 The image links Rust builds with mold by default via `RUSTFLAGS` (a project's
 own rustflags or `docker run -e RUSTFLAGS=...` override it), and ships
 sccache for opt-in reuse of dependency builds across worktrees:

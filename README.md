@@ -47,6 +47,8 @@ key、自定义 endpoint；选择自定义 endpoint 后再显示按名称排序�
 > Codex 默认使用 `--yolo`，Claude Code 默认使用
 > `--dangerously-skip-permissions`。当前项目目录、必要的 Git metadata 和
 > 显式凭证会按用途挂载给所选 agent；请只在信任的项目中使用。
+> `--host-docker` 还会让 agent 获得宿主 Docker 的 root 级控制权，包括
+> 挂载任意宿主路径的能力；启用时启动器会在每次启动前显示大幅警告。
 
 常用命令：
 
@@ -62,6 +64,7 @@ docker-agent claude --env CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000 --profile deepseek
 docker-agent codex --pat-path ~/.local/share/docker-agent/pat/github-x
 docker run -d --name project-pg --network docker-agent -e POSTGRES_PASSWORD=change-me postgres:17
 docker-agent codex --network another-development-network
+docker-agent claude --host-docker --profile deepseek
 ```
 
 ## 命令行选项
@@ -90,6 +93,10 @@ docker-agent codex --network another-development-network
 --disable-default-network
     不创建、不加入共享的 docker-agent 网络。未另外指定网络时，
     Docker 使用内置 bridge 网络。
+
+--host-docker
+    将宿主 Docker Unix socket 挂载到容器，使 agent 可以操作宿主的所有
+    容器、镜像、网络和卷。默认禁用；启用时会显示安全警告。
 
 --pat TOKEN
     直接提供 Git token；会进入 shell 历史，优先使用 --pat-path。

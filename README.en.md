@@ -52,6 +52,9 @@ model is not configured.
 > `--dangerously-skip-permissions`. The selected agent receives the current
 > project directory, required Git metadata, and explicitly selected credentials. Use
 > this only with projects you trust.
+> `--host-docker` additionally gives the agent root-equivalent control of the
+> host Docker daemon, including the ability to mount arbitrary host paths. The
+> launcher displays a prominent warning before every such launch.
 
 Common commands:
 
@@ -67,6 +70,7 @@ docker-agent claude --env CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000 --profile deepseek
 docker-agent codex --pat-path ~/.local/share/docker-agent/pat/github-x
 docker run -d --name project-pg --network docker-agent -e POSTGRES_PASSWORD=change-me postgres:17
 docker-agent codex --network another-development-network
+docker-agent claude --host-docker --profile deepseek
 ```
 
 ## Command-line options
@@ -97,6 +101,11 @@ Shared options:
 --disable-default-network
     Do not create or join the shared docker-agent network. When no other
     network is selected, Docker uses its built-in bridge network.
+
+--host-docker
+    Mount the host Docker Unix socket so the agent can control every host
+    container, image, network, and volume. Disabled by default; displays a
+    security warning when enabled.
 
 --pat TOKEN
     Provide a Git token directly; it enters shell history, so prefer --pat-path.

@@ -20,3 +20,8 @@ You are running inside a docker-agent development container. Key facts:
   installs instead of global `pip install`.
 - The container user has passwordless sudo. Files created in bind-mounted
   checkouts are owned by the host user automatically.
+- Docker CLI, Buildx, and Compose are installed, but the image contains no
+  Docker daemon. When `DOCKER_HOST` points to `/var/run/docker.sock`, the
+  launcher was explicitly started with host Docker access and this agent has
+  root-equivalent control of the Docker host, including arbitrary host-path
+  mounts.

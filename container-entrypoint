@@ -143,6 +143,16 @@ else
   RUNTIME_USER=docker-codex
 fi
 
+if [[ -n ${HOST_DOCKER_GID:-} && $HOST_DOCKER_GID != "$HOST_GID" && $HOST_UID != 0 ]]; then
+  if docker_group_entry=$(getent group "$HOST_DOCKER_GID"); then
+    DOCKER_GROUP=${docker_group_entry%%:*}
+  else
+    DOCKER_GROUP=docker-host
+    groupadd --gid "$HOST_DOCKER_GID" "$DOCKER_GROUP"
+  fi
+  usermod --append --groups "$DOCKER_GROUP" "$RUNTIME_USER"
+fi
+
 mkdir -p "$RUNTIME_HOME" /codex-cache
 chown "$HOST_UID:$HOST_GID" "$RUNTIME_HOME" /codex-cache
 
@@ -249,4 +259,7 @@ elif [[ ${1:-} == claude ]]; then
   fi
 fi
 
-exec gosu "$HOST_UID:$HOST_GID" "$@"
+# An explicit gosu UID:GID drops supplementary groups, including the group
+# added above for the host Docker socket. setpriv keeps the exact primary
+# UID/GID while initializing supplementary groups from the runtime user.
+exec setpriv --reuid="$HOST_UID" --regid="$HOST_GID" --init-groups -- "$@"

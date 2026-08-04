@@ -8,6 +8,14 @@ fail() {
   exit 1
 }
 
+file_gid() {
+  if stat -c %g "$1" >/dev/null 2>&1; then
+    stat -c %g "$1"
+  else
+    stat -f %g "$1"
+  fi
+}
+
 assert_line() {
   local expected=$1 file=$2
   grep -Fqx -- "$expected" "$file" ||
