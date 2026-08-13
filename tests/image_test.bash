@@ -8,6 +8,17 @@ source "$ROOT/tests/testlib.bash"
 DOCKER_BIN=${DOCKER_AGENT_DOCKER_BIN:-${DOCKER_CODEX_DOCKER_BIN:-docker}}
 IMAGE=${DOCKER_AGENT_TEST_IMAGE:-${DOCKER_CODEX_TEST_IMAGE:-docker-agent:local}}
 
+# Snapshot of the PowerShell script Codex sends to powershell.exe when it reads
+# a clipboard image on WSL. The shim in container-powershell-shim emulates this
+# call, so the contract test below compares this snapshot against the script
+# embedded in the pinned Codex build. A mismatch means the upstream contract
+# moved and the shim needs review before this value is updated.
+# shellcheck disable=SC2016 # PowerShell variables must stay unexpanded.
+CODEX_CLIPBOARD_PS_SCRIPT='[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $img = Get-Clipboard -Format Image; if ($img -ne $null) { $p=[System.IO.Path]::GetTempFileName(); $p = [System.IO.Path]::ChangeExtension($p,'\''png'\''); $img.Save($p,[System.Drawing.Imaging.ImageFormat]::Png); Write-Output $p } else { exit 1 }'
+# Matches the script above inside the stripped binary, where string constants
+# are concatenated without separators.
+CODEX_CLIPBOARD_PS_PATTERN='\[Console\]::OutputEncoding.*?else \{ exit 1 \}'
+
 test_debian_and_official_node_runtime() {
   "$DOCKER_BIN" image inspect "$IMAGE" >/dev/null
   # shellcheck disable=SC2016 # Variables expand inside the container.
@@ -391,12 +402,50 @@ test_mold_is_default_linker_and_sccache_is_available() {
     '
 }
 
+test_codex_still_sends_the_clipboard_script_the_shim_emulates() {
+  # The shim is coupled to Codex internals, so a Codex upgrade can silently
+  # break clipboard paste. Read the script out of the pinned build instead of
+  # trusting the snapshot to still describe it.
+  # shellcheck disable=SC2016 # Variables expand inside the container.
+  "$DOCKER_BIN" run --rm \
+    --env CODEX_CLIPBOARD_PS_SCRIPT="$CODEX_CLIPBOARD_PS_SCRIPT" \
+    --env CODEX_CLIPBOARD_PS_PATTERN="$CODEX_CLIPBOARD_PS_PATTERN" \
+    --entrypoint bash \
+    "$IMAGE" \
+    -lc '
+      set -euo pipefail
+      shopt -s nullglob
+      binaries=(/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-*/vendor/*/bin/codex)
+      if (( ${#binaries[@]} != 1 )); then
+        printf "%s\n" "expected one codex native binary, found ${#binaries[@]}" >&2
+        exit 1
+      fi
+      # Codex spawns powershell.exe first among its candidate names; the shim
+      # only intercepts the call while that name is still in the binary.
+      grep -aFq "powershell.exe" "${binaries[0]}" || {
+        printf "%s\n" "codex no longer references powershell.exe" >&2
+        exit 1
+      }
+      actual=$(grep -aoPm1 "$CODEX_CLIPBOARD_PS_PATTERN" "${binaries[0]}") || {
+        printf "%s\n" "no clipboard script found in the codex binary" >&2
+        exit 1
+      }
+      if [[ $actual != "$CODEX_CLIPBOARD_PS_SCRIPT" ]]; then
+        printf "%s\n" "codex clipboard contract drifted; review the shim" >&2
+        printf "expected: %s\n" "$CODEX_CLIPBOARD_PS_SCRIPT" >&2
+        printf "actual:   %s\n" "$actual" >&2
+        exit 1
+      fi
+    '
+}
+
 test_powershell_shim_reads_wayland_clipboard_image() {
   # shellcheck disable=SC2016,SC2026 # Variables expand inside the container.
   "$DOCKER_BIN" run --rm \
     --env HOST_UID=12345 \
     --env HOST_GID=23456 \
     --env WSL_DISTRO_NAME=Ubuntu \
+    --env CODEX_CLIPBOARD_PS_SCRIPT="$CODEX_CLIPBOARD_PS_SCRIPT" \
     "$IMAGE" \
     bash -lc '
       set -euo pipefail
@@ -406,9 +455,7 @@ test_powershell_shim_reads_wayland_clipboard_image() {
       python3 -c "from PIL import Image; Image.new(\"RGB\", (2, 2), (255, 0, 0)).save(\"clip.bmp\", \"BMP\")"
       printf "#!/usr/bin/env bash\ncase \"\${1:-}\" in --list-types) printf \"image/bmp\\\\n\";; --type|-t) cat \"$work/clip.bmp\";; *) exit 1;; esac\n" > wl-paste
       chmod +x wl-paste
-      # Use the exact PowerShell script Codex 0.147.0 sends, so the test
-      # breaks if Codex changes the contract the shim emulates.
-      PATH="$work:$PATH" out=$(powershell.exe -NoProfile -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; \$img = Get-Clipboard -Format Image; if (\$img -ne \$null) { \$p=[System.IO.Path]::GetTempFileName(); \$p = [System.IO.Path]::ChangeExtension(\$p,'png'); \$img.Save(\$p,[System.Drawing.Imaging.ImageFormat]::Png); Write-Output \$p } else { exit 1 }")
+      PATH="$work:$PATH" out=$(powershell.exe -NoProfile -Command "$CODEX_CLIPBOARD_PS_SCRIPT")
       # Codex maps C:\x\y to /mnt/c/x/y before reading the file.
       [[ $out == C:*.png ]]
       name=${out##*\\}
@@ -436,5 +483,6 @@ test_claude_runtime_is_non_root_utc_and_en_us
 test_python_and_archive_tools_are_available
 test_agent_notes_are_readable_by_runtime_user
 test_mold_is_default_linker_and_sccache_is_available
+test_codex_still_sends_the_clipboard_script_the_shim_emulates
 test_powershell_shim_reads_wayland_clipboard_image
 printf 'image tests: PASS\n'
