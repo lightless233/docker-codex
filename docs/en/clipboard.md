@@ -25,7 +25,7 @@ the issue at the clipboard-format boundary for both Claude and Codex.
 On a WSL host Codex actually reads clipboard images through a Windows
 PowerShell fallback, and WSL interop cannot reach the Windows session from
 a Docker Desktop container. The image therefore ships a `powershell.exe`
-shim that emulates the exact call contract Codex 0.146.0 expects (including
+shim that emulates the exact call contract Codex 0.147.0 expects (including
 the Windows-path-to-`/mnt/c` mapping), fetching the image through the
 forwarded WSLg Wayland clipboard and converting it to PNG. The shim only
 handles clipboard image reads; every other `powershell.exe` call fails. It

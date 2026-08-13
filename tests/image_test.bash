@@ -16,7 +16,7 @@ test_debian_and_official_node_runtime() {
     source /etc/os-release
     [[ $ID == debian ]]
     [[ $VERSION_ID == 13 ]]
-    [[ $(node --version) == v24.18.0 ]]
+    [[ $(node --version) == v24.19.0 ]]
     if dpkg-query --show nodejs npm >/dev/null 2>&1; then
       printf "%s\n" "nodejs/npm unexpectedly installed through dpkg" >&2
       exit 1
@@ -107,8 +107,8 @@ test_agent_notes_are_readable_by_runtime_user() {
 test_claude_code_and_locale_are_installed() {
   "$DOCKER_BIN" run --rm --entrypoint bash "$IMAGE" -lc '
     set -euo pipefail
-    codex --version | grep -Fx "codex-cli 0.146.0" >/dev/null
-    claude --version | grep -F "2.1.212" >/dev/null
+    codex --version | grep -Fx "codex-cli 0.147.0" >/dev/null
+    claude --version | grep -F "2.1.229" >/dev/null
     locale -a | grep -Fxi "en_US.utf8" >/dev/null
     LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 locale charmap |
       grep -Fx "UTF-8" >/dev/null
@@ -406,7 +406,7 @@ test_powershell_shim_reads_wayland_clipboard_image() {
       python3 -c "from PIL import Image; Image.new(\"RGB\", (2, 2), (255, 0, 0)).save(\"clip.bmp\", \"BMP\")"
       printf "#!/usr/bin/env bash\ncase \"\${1:-}\" in --list-types) printf \"image/bmp\\\\n\";; --type|-t) cat \"$work/clip.bmp\";; *) exit 1;; esac\n" > wl-paste
       chmod +x wl-paste
-      # Use the exact PowerShell script Codex 0.146.0 sends, so the test
+      # Use the exact PowerShell script Codex 0.147.0 sends, so the test
       # breaks if Codex changes the contract the shim emulates.
       PATH="$work:$PATH" out=$(powershell.exe -NoProfile -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; \$img = Get-Clipboard -Format Image; if (\$img -ne \$null) { \$p=[System.IO.Path]::GetTempFileName(); \$p = [System.IO.Path]::ChangeExtension(\$p,'png'); \$img.Save(\$p,[System.Drawing.Imaging.ImageFormat]::Png); Write-Output \$p } else { exit 1 }")
       # Codex maps C:\x\y to /mnt/c/x/y before reading the file.

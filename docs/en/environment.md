@@ -7,7 +7,7 @@ toolchain, or when investigating cache usage.
 
 ## Image toolchain
 
-The image uses Debian 13 slim and installs Node.js 24.18.0 LTS from the
+The image uses Debian 13 slim and installs Node.js 24.19.0 LTS from the
 official nodejs.org linux-x64/linux-arm64 archive after checking it against
 the release's `SHASUMS256.txt`. It also contains pnpm, Rust stable (with
 rustfmt and clippy), Codex CLI, Git, Python 3 (pip and venv), common native

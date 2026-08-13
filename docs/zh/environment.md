@@ -6,7 +6,7 @@
 
 ## 镜像工具链
 
-镜像基于 Debian 13 slim。Node.js 24.18.0 LTS 从 nodejs.org 官方提供的
+镜像基于 Debian 13 slim。Node.js 24.19.0 LTS 从 nodejs.org 官方提供的
 linux-x64 或 linux-arm64 压缩包安装，并使用该版本发布目录中的
 `SHASUMS256.txt` 校验。镜像还包含 pnpm、Rust stable（含 rustfmt 与
 clippy）、Codex CLI、Git、Python 3（pip 与 venv）、常用本地编译依赖，

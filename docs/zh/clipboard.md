@@ -20,7 +20,7 @@ WSLg 可能把 PNG 截图以 `image/bmp` 暴露给 Wayland 客户端。Claude Co
 
 WSL 宿主上的 Codex 实际是通过 Windows PowerShell 回退读取剪贴板图像
 的，而 Docker Desktop 容器无法使用 WSL interop 触达 Windows 会话。
-镜像因此内置了一个 `powershell.exe` shim：它模拟 Codex 0.146.0 期望
+镜像因此内置了一个 `powershell.exe` shim：它模拟 Codex 0.147.0 期望
 的调用契约（包括 Windows 路径到 `/mnt/c` 的映射），通过转发进来的
 WSLg Wayland 剪贴板取图并转成 PNG。shim 只处理剪贴板图像读取，其他
 `powershell.exe` 调用一律失败。它与 Codex 内部实现耦合，属于临时
