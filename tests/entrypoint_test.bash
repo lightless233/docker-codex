@@ -309,7 +309,7 @@ test_agent_notes_are_injected_into_codex_invocation() {
   assert_ordered_lines "$log" \
     "<codex>" \
     "<-c>" \
-    "<user_instructions=test container notes>" \
+    "<developer_instructions=test container notes>" \
     "<--version>"
 
   : >"$log"
@@ -319,7 +319,7 @@ test_agent_notes_are_injected_into_codex_invocation() {
   assert_ordered_lines "$log" \
     "<codex>" \
     "<-c>" \
-    "<user_instructions=test container notes>" \
+    "<developer_instructions=test container notes>" \
     "<--version>"
 
   : >"$log"

@@ -41,10 +41,23 @@ RUSTC_WRAPPER=sccache SCCACHE_DIR=/codex-cache/sccache cargo build
 The image ships `/usr/local/share/docker-agent/agent-notes.md`, which
 records key environment facts: whether push credentials are configured, the
 default mold linker, opt-in sccache usage, the `CARGO_TARGET_DIR` location,
-and so on. The entrypoint injects it via `-c user_instructions=...` for Codex
-and `--append-system-prompt-file` for Claude. It contains no response-language,
-personality, endpoint, or model instruction. Codex `-c` overrides passed after
-`--` take precedence.
+and so on. It contains no response-language, personality, endpoint, or model
+instruction.
+
+Each agent has a different injection channel. Codex uses
+`-c developer_instructions=...` (which appends; `model_instructions_file`
+replaces the built-in instructions and is therefore unsuitable), Claude uses
+`--append-system-prompt-file`, and Kimi Code, having no such flag, reads the
+notes from `$HOME/.agents/AGENTS.md` written inside the container. Cursor Agent
+has no way to append to its system prompt and so never receives these notes,
+though it does read the project's own `AGENTS.md` and `.cursor/rules`. Codex
+`-c` overrides passed after `--` take precedence.
+
+Every one of these channels is a coupling to an upstream CLI, and they tend to
+break silently: Codex ignores unrecognized `-c` keys without an error, so when
+`user_instructions` was removed in 0.147.0 the notes stopped arriving
+unnoticed. `tests/image_test.bash` therefore asserts each channel against the
+pinned builds.
 
 Claude alone receives UTC and `en_US.UTF-8`; this does not change Codex or
 ordinary container commands and does not force Claude to answer in English.

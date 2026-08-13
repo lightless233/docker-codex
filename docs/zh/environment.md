@@ -37,10 +37,21 @@ RUSTC_WRAPPER=sccache SCCACHE_DIR=/codex-cache/sccache cargo build
 
 镜像内置 `/usr/local/share/docker-agent/agent-notes.md`，记录容器环境
 的关键事实：推送凭证是否已配置、默认使用 mold 链接器、sccache 的
-opt-in 用法、`CARGO_TARGET_DIR` 的位置等。entrypoint 在启动 Codex 时用
-`-c user_instructions=...` 注入，启动 Claude 时用
-`--append-system-prompt-file` 注入。文件不包含回答语言、人格、endpoint
-或模型指令。调用方在 `--` 之后传入的 Codex `-c` 覆盖优先级更高。
+opt-in 用法、`CARGO_TARGET_DIR` 的位置等。文件不包含回答语言、人格、
+endpoint 或模型指令。
+
+每个 agent 的注入通道不同：Codex 用 `-c developer_instructions=...`
+（追加语义；`model_instructions_file` 是替换内置指令，不适用），
+Claude 用 `--append-system-prompt-file`，Kimi Code 没有对应参数，改为
+写入容器内的 `$HOME/.agents/AGENTS.md`。Cursor Agent 没有任何追加
+system prompt 的方式，因此拿不到这份说明，但它会读取项目自身的
+`AGENTS.md` 与 `.cursor/rules`。调用方在 `--` 之后传入的 Codex `-c`
+覆盖优先级更高。
+
+这些通道都是与上游 CLI 的耦合，而且失效时往往没有报错——Codex 会静默
+忽略无法识别的 `-c` 键，`user_instructions` 在 0.147.0 被移除后，这份
+说明有一段时间根本没有送达。`tests/image_test.bash` 因此针对固定版本
+逐一断言这些通道仍然存在。
 
 Claude 进程单独使用 UTC 和 `en_US.UTF-8`，不会改变 Codex 或普通容器命令
 的环境，也不会强制 Claude 使用英文回答。完整策略见

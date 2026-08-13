@@ -205,9 +205,14 @@ if [[ ${1:-} == codex ]]; then
   fi
   # Give the in-container Codex the environment facts shipped in the image.
   # Any -c overrides from the caller come later and win.
+  #
+  # developer_instructions appends to the session. Codex silently ignores
+  # unknown -c keys, so a renamed key degrades without any error: the earlier
+  # user_instructions key vanished in 0.147.0 and took these notes with it.
+  # tests/image_test.bash asserts the key still exists in the pinned build.
   agent_notes=${DOCKER_AGENT_AGENT_NOTES:-${DOCKER_CODEX_AGENT_NOTES:-/usr/local/share/docker-agent/agent-notes.md}}
   if [[ -r $agent_notes ]]; then
-    set -- codex -c "user_instructions=$(cat "$agent_notes")" "${@:2}"
+    set -- codex -c "developer_instructions=$(cat "$agent_notes")" "${@:2}"
   fi
 elif [[ ${1:-} == claude ]]; then
   connection=${DOCKER_AGENT_CLAUDE_CONNECTION:-}

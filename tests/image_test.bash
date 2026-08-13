@@ -557,6 +557,47 @@ test_cursor_agent_runs_from_its_own_bundled_runtime() {
   '
 }
 
+test_every_agent_still_accepts_the_instruction_channel_we_use() {
+  # Injecting the shared notes couples us to each upstream CLI. Codex silently
+  # ignores unknown -c keys, so when user_instructions was removed in 0.147.0
+  # the notes stopped arriving with no error anywhere. Assert each channel
+  # against the pinned builds so the next rename fails here instead.
+  # shellcheck disable=SC2016 # Variables expand inside the container.
+  "$DOCKER_BIN" run --rm --entrypoint bash "$IMAGE" -lc '
+    set -euo pipefail
+
+    codex_bin=$(ls /usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-*/vendor/*/bin/codex)
+    grep -aFq "developer_instructions" "$codex_bin" || {
+      printf "%s\n" "codex no longer knows developer_instructions; the notes are silently dropped" >&2
+      exit 1
+    }
+
+    grep -rqa -- "append-system-prompt-file" \
+      /usr/local/lib/node_modules/@anthropic-ai/claude-code/ || {
+      printf "%s\n" "claude no longer accepts --append-system-prompt-file" >&2
+      exit 1
+    }
+
+    kimi_bundle=/usr/local/lib/node_modules/@moonshot-ai/kimi-code/dist/main.mjs
+    grep -aFq ".agents" "$kimi_bundle" || {
+      printf "%s\n" "kimi no longer reads the generic ~/.agents instruction path" >&2
+      exit 1
+    }
+    grep -aFq "AGENTS.md" "$kimi_bundle" || {
+      printf "%s\n" "kimi no longer reads AGENTS.md" >&2
+      exit 1
+    }
+
+    # Cursor Agent has no flag that appends to the system prompt, which is why
+    # the notes are not injected for it. If upstream adds one, wire it up.
+    if cursor-agent --help 2>&1 |
+      grep -qiE -- "--append-system-prompt|--system-prompt-file"; then
+      printf "%s\n" "cursor-agent gained a system-prompt flag; the notes can now be injected" >&2
+      exit 1
+    fi
+  '
+}
+
 test_codex_still_sends_the_clipboard_script_the_shim_emulates() {
   # The shim is coupled to Codex internals, so a Codex upgrade can silently
   # break clipboard paste. Read the script out of the pinned build instead of
@@ -640,6 +681,7 @@ test_agent_notes_are_readable_by_runtime_user
 test_mold_is_default_linker_and_sccache_is_available
 test_kimi_notes_reach_the_path_kimi_reads
 test_forwarded_terminal_keeps_its_color_depth
+test_every_agent_still_accepts_the_instruction_channel_we_use
 test_cursor_agent_receives_the_key_without_it_reaching_the_command_line
 test_cursor_shared_data_root_persists_writes_to_the_host
 test_cursor_agent_runs_from_its_own_bundled_runtime
