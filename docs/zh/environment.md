@@ -14,6 +14,15 @@ Claude Code、Kimi Code、Cursor Agent（自带运行时，位于 `/opt/cursor-a
 Docker CLI、Buildx、Compose，以及适合 agent 开发使用的
 shell 工具。镜像只包含 Docker 客户端，不包含 `dockerd`；只有显式使用
 `--host-docker` 时，客户端才能通过挂载的 Unix socket 访问宿主 Docker。
+
+Docker 只会给容器一个简陋的 `TERM=xterm`，颜色能力被压到 8 色，agent
+TUI 的输入框背景等元素会因此失去底色。启动器在有 TTY 时把宿主的 `TERM`
+和 `COLORTERM` 转发进容器；如果镜像里没有该终端的 terminfo 条目，
+entrypoint 会提示并回落到 `xterm-256color`，而不是让 curses 出错或退回
+8 色。镜像安装了 `ncurses-term` 以覆盖常见终端，但个别较新的终端
+（如 kitty、ghostty）仍依赖上述回落。显式的
+`--env TERM=...` 优先级高于自动转发。
+
 镜像生成 `en_US.UTF-8` locale，并在 `/etc/profile.d` 中保留 Cargo 与
 pnpm 的 PATH 条目，login shell 不会丢失工具链。镜像默认通过
 `RUSTFLAGS` 使用 mold 链接器加速构建（项目自身的 rustflags 或

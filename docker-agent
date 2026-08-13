@@ -305,6 +305,11 @@ repo_id_for() {
   printf '%s' "$1" | git hash-object --stdin | cut -c1-16
 }
 
+launcher_has_tty() {
+  [[ ${DOCKER_AGENT_TEST_FORCE_TTY:-} == 1 ]] && return 0
+  [[ -t 0 && -t 1 ]]
+}
+
 parse_origin_host() {
   local url=$1
   case $url in
@@ -834,8 +839,7 @@ run_agent_hook() {
 
 resolve_claude_launch() {
   if [[ -z $CLAUDE_CONNECTION ]]; then
-    if [[ ${DOCKER_AGENT_TEST_FORCE_TTY:-} != 1 ]] &&
-      { [[ ! -t 0 ]] || [[ ! -t 1 ]]; }; then
+    if ! launcher_has_tty; then
       die "non-interactive Claude launch requires --official-subscription, --official-api, or --profile NAME"
     fi
     if ! menu_select "请选择 Claude Code 的连接方式：" \
@@ -1234,8 +1238,19 @@ for network in "${NETWORKS[@]}"; do
   fi
   DOCKER_ARGS+=(--network "$network")
 done
-if [[ -t 0 && -t 1 ]]; then
+if launcher_has_tty; then
   DOCKER_ARGS+=(-it)
+  # Docker only sets a bare TERM=xterm, which caps the container at 8 colors
+  # and drops the background rendering agent TUIs use for their input box.
+  # Forward the host capability instead; the entrypoint falls back when the
+  # image has no terminfo entry for this terminal. Placed before --env specs
+  # so an explicit --env TERM=... still wins.
+  if [[ -n ${TERM:-} ]]; then
+    DOCKER_ARGS+=(--env "TERM=$TERM")
+  fi
+  if [[ -n ${COLORTERM:-} ]]; then
+    DOCKER_ARGS+=(--env "COLORTERM=$COLORTERM")
+  fi
 fi
 DOCKER_ARGS+=(--env "HOST_UID=$(id -u)" --env "HOST_GID=$(id -g)")
 if ((HOST_DOCKER)); then

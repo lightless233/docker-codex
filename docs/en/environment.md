@@ -15,7 +15,18 @@ build dependencies, Claude Code, Kimi Code, Cursor Agent (self-contained under
 `/opt/cursor-agent`), Docker CLI, Buildx, Compose, and shell
 utilities useful during agentic development. It ships Docker clients only,
 not `dockerd`; they can reach the host daemon only when `--host-docker`
-explicitly mounts its Unix socket. The image generates the `en_US.UTF-8`
+explicitly mounts its Unix socket.
+
+Docker gives a container only a bare `TERM=xterm`, capping it at 8 colors and
+costing agent TUIs the background rendering of elements such as the input box.
+With a TTY the launcher forwards the host `TERM` and `COLORTERM`, and when the
+image has no terminfo entry for that terminal the entrypoint says so and falls
+back to `xterm-256color` instead of breaking curses or dropping to 8 colors.
+The image installs `ncurses-term` for broad coverage, though a few newer
+terminals such as kitty and ghostty still rely on that fallback. An explicit
+`--env TERM=...` overrides the forwarded value.
+
+The image generates the `en_US.UTF-8`
 locale. An `/etc/profile.d` entry keeps Cargo and pnpm on PATH for login shells.
 The image links Rust builds with mold by default via `RUSTFLAGS` (a project's
 own rustflags or `docker run -e RUSTFLAGS=...` override it), and ships

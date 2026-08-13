@@ -43,8 +43,9 @@ record_claude_environment() {
     "${CLAUDE_CODE_ATTRIBUTION_HEADER:-}" >>"$log"
   printf '<ENV_MAX_OUTPUT_TOKENS:%s>\n' \
     "${CLAUDE_CODE_MAX_OUTPUT_TOKENS:-}" >>"$log"
-  printf '<ENV_LOWERCASE_VARIABLE:%s>\n' \
+    printf '<ENV_LOWERCASE_VARIABLE:%s>\n' \
     "${lowercase_variable:-}" >>"$log"
+  printf '<ENV_TERM:%s>\n' "${TERM:-}" >>"$log"
 }
 
 case $name in
@@ -671,6 +672,36 @@ test_kimi_environment_policy_does_not_change_other_commands() {
   assert_no_line "<CALL:cp>" "$log"
 }
 
+test_unknown_terminal_falls_back_without_losing_color_depth() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local fake_bin="$TEST_TMP/bin"
+  local log="$TEST_TMP/system.log"
+  local errors="$TEST_TMP/errors"
+  : >"$log"
+  make_fake_system_commands "$fake_bin"
+
+  # A terminal the image knows: forwarded unchanged.
+  TERM=xterm-256color FAKE_GROUP_EXISTS=1 FAKE_PASSWD_EXISTS=1 \
+    run_entrypoint "$fake_bin" "$log" custom-command
+  assert_line "<ENV_TERM:xterm-256color>" "$log"
+
+  # A terminal it does not know would break curses, so fall back to a
+  # 256-color entry rather than leaving it broken or dropping to 8 colors.
+  : >"$log"
+  TERM=xterm-nonexistent-terminal FAKE_GROUP_EXISTS=1 FAKE_PASSWD_EXISTS=1 \
+    run_entrypoint "$fake_bin" "$log" custom-command 2>"$errors"
+  assert_line "<ENV_TERM:xterm-256color>" "$log"
+  assert_contains "no terminfo entry for xterm-nonexistent-terminal" "$errors"
+
+  # bash substitutes dumb when TERM is absent, and dumb is a real terminfo
+  # entry, so a non-interactive run must keep it instead of being upgraded.
+  : >"$log"
+  TERM=dumb FAKE_GROUP_EXISTS=1 FAKE_PASSWD_EXISTS=1 \
+    run_entrypoint "$fake_bin" "$log" custom-command
+  assert_line "<ENV_TERM:dumb>" "$log"
+}
+
 test_cursor_api_key_is_read_from_the_mounted_file() {
   local TEST_TMP
   TEST_TMP=$(new_tmp)
@@ -754,4 +785,5 @@ test_kimi_environment_policy_does_not_change_other_commands
 test_cursor_api_key_is_read_from_the_mounted_file
 test_cursor_missing_or_empty_key_fails_before_launching
 test_cursor_key_is_not_exported_for_other_agents
+test_unknown_terminal_falls_back_without_losing_color_depth
 printf 'entrypoint tests: PASS\n'

@@ -5,6 +5,16 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 # shellcheck source=tests/testlib.bash
 source "$ROOT/tests/testlib.bash"
 
+run_launcher_without_term() {
+  local directory=$1
+  shift
+  (
+    unset TERM COLORTERM
+    export DOCKER_AGENT_TEST_FORCE_TTY=1
+    run_launcher "$directory" "$ROOT" "$@"
+  )
+}
+
 mount_source_for_target() {
   local log=$1 target=$2 line
   line=$(grep -F "target=$target>" "$log" | head -n 1)
@@ -50,6 +60,43 @@ test_canonical_and_compatibility_entrypoints_dispatch_agents() {
     --official-subscription -- --version
   assert_ordered_lines "$TEST_DOCKER_LOG" \
     "<claude>" "<--version>"
+}
+
+test_terminal_capability_is_forwarded_only_with_a_tty() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+
+  # Docker only sets TERM=xterm on its own, which costs the agent TUIs their
+  # color depth, so the host values have to be forwarded explicitly.
+  DOCKER_AGENT_TEST_FORCE_TTY=1 TERM=xterm-256color COLORTERM=truecolor \
+    run_launcher "$repo" "$ROOT" -- --version
+  assert_line "<-it>" "$TEST_DOCKER_LOG"
+  assert_line "<TERM=xterm-256color>" "$TEST_DOCKER_LOG"
+  assert_line "<COLORTERM=truecolor>" "$TEST_DOCKER_LOG"
+
+  # An explicit --env has to win over the forwarded value.
+  : >"$TEST_DOCKER_LOG"
+  DOCKER_AGENT_TEST_FORCE_TTY=1 TERM=xterm-256color \
+    run_launcher "$repo" "$ROOT" --env TERM=dumb -- --version
+  assert_ordered_lines "$TEST_DOCKER_LOG" "<TERM=xterm-256color>" "<TERM=dumb>"
+
+  # Without a terminal there is nothing to describe and no -it.
+  : >"$TEST_DOCKER_LOG"
+  TERM=xterm-256color COLORTERM=truecolor \
+    run_launcher "$repo" "$ROOT" -- --version
+  assert_no_line "<-it>" "$TEST_DOCKER_LOG"
+  assert_no_line "<TERM=xterm-256color>" "$TEST_DOCKER_LOG"
+  assert_no_line "<COLORTERM=truecolor>" "$TEST_DOCKER_LOG"
+
+  # An unset TERM must not produce an empty assignment.
+  : >"$TEST_DOCKER_LOG"
+  run_launcher_without_term "$repo" -- --version
+  assert_line "<-it>" "$TEST_DOCKER_LOG"
+  assert_no_line "<TERM=>" "$TEST_DOCKER_LOG"
+  assert_no_line "<COLORTERM=>" "$TEST_DOCKER_LOG"
 }
 
 test_normal_checkout_preserves_paths_and_codex_arguments() {
@@ -837,6 +884,7 @@ test_help_documents_agent_and_claude_interfaces() {
 
 init_tests
 test_canonical_and_compatibility_entrypoints_dispatch_agents
+test_terminal_capability_is_forwarded_only_with_a_tty
 test_normal_checkout_preserves_paths_and_codex_arguments
 test_non_git_directory_launches_codex_and_claude
 test_git_init_preserves_non_git_cache_and_claude_state_identity

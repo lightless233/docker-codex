@@ -445,6 +445,36 @@ test_kimi_notes_reach_the_path_kimi_reads() {
     "$IMAGE" kimi --yolo
 }
 
+test_forwarded_terminal_keeps_its_color_depth() {
+  # Docker sets a bare TERM=xterm, capping the container at 8 colors and
+  # costing agent TUIs the background rendering of their input box.
+  # shellcheck disable=SC2016 # Variables expand inside the container.
+  "$DOCKER_BIN" run --rm \
+    --env HOST_UID=12345 \
+    --env HOST_GID=23456 \
+    --env TERM=xterm-256color \
+    "$IMAGE" \
+    bash -lc '
+      set -euo pipefail
+      [[ $TERM == xterm-256color ]]
+      [[ $(tput colors) == 256 ]]
+    '
+
+  # A terminal with no entry in the image must degrade to a 256-color one
+  # rather than break curses or fall back to the 8-color default.
+  # shellcheck disable=SC2016 # Variables expand inside the container.
+  "$DOCKER_BIN" run --rm \
+    --env HOST_UID=12345 \
+    --env HOST_GID=23456 \
+    --env TERM=xterm-nonexistent-terminal \
+    "$IMAGE" \
+    bash -lc '
+      set -euo pipefail
+      [[ $TERM == xterm-256color ]]
+      [[ $(tput colors) == 256 ]]
+    '
+}
+
 test_cursor_agent_receives_the_key_without_it_reaching_the_command_line() {
   # The entrypoint must turn the read-only key mount into CURSOR_API_KEY. The
   # probe stands in for the real CLI so no request is billed.
@@ -571,6 +601,7 @@ test_python_and_archive_tools_are_available
 test_agent_notes_are_readable_by_runtime_user
 test_mold_is_default_linker_and_sccache_is_available
 test_kimi_notes_reach_the_path_kimi_reads
+test_forwarded_terminal_keeps_its_color_depth
 test_cursor_agent_receives_the_key_without_it_reaching_the_command_line
 test_cursor_agent_runs_from_its_own_bundled_runtime
 test_codex_still_sends_the_clipboard_script_the_shim_emulates

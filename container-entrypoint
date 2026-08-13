@@ -166,6 +166,15 @@ fi
 export HOME=$RUNTIME_HOME
 export USER=$RUNTIME_USER
 export LOGNAME=$RUNTIME_USER
+
+# The launcher forwards the host TERM so agent TUIs keep their color depth.
+# A terminal the image has no terminfo entry for would break curses instead, so
+# fall back to a 256-color entry rather than the 8-color default Docker sets.
+if [[ -n ${TERM:-} ]] && ! infocmp "$TERM" >/dev/null 2>&1; then
+  printf 'docker-agent: no terminfo entry for %s; using xterm-256color\n' \
+    "$TERM" >&2
+  export TERM=xterm-256color
+fi
 export CODEX_HOME=${CODEX_HOME:-/codex-home}
 export CARGO_HOME=/codex-cache/cargo-home
 export XDG_CACHE_HOME=/codex-cache/xdg

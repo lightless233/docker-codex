@@ -34,6 +34,7 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update \
         libwayland-client0 \
         locales \
         mold \
+        ncurses-term \
         openssh-client \
         pkg-config \
         python-is-python3 \
