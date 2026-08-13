@@ -505,6 +505,44 @@ test_cursor_agent_receives_the_key_without_it_reaching_the_command_line() {
     "$IMAGE" cursor-agent --disable-auto-update --force
 }
 
+test_cursor_shared_data_root_persists_writes_to_the_host() {
+  # Cursor records workspace trust and session history under
+  # $HOME/.cursor/projects, and has no environment variable that relocates
+  # that directory. If the link is wrong the trust prompt returns on every
+  # launch, so verify a container-side write reaches the host directory.
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local probe_dir="$TEST_TMP/probe"
+  local key_file="$TEST_TMP/cursor-api-key"
+  local cursor_home="$TEST_TMP/cursor-home"
+  install -d -m 755 "$probe_dir"
+  install -d -m 700 "$cursor_home"
+  install -m 600 /dev/null "$key_file"
+  printf '%s\n' 'image-test-key' >"$key_file"
+  # shellcheck disable=SC2016 # Variables expand when the generated probe runs.
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    '[[ -L $HOME/.cursor ]]' \
+    '[[ $(readlink "$HOME/.cursor") == /cursor-home ]]' \
+    'mkdir -p "$HOME/.cursor/projects/probe-project"' \
+    ': > "$HOME/.cursor/projects/probe-project/.workspace-trusted"' \
+    >"$probe_dir/cursor-agent"
+  chmod 0755 "$probe_dir/cursor-agent"
+
+  "$DOCKER_BIN" run --rm \
+    --env HOST_UID="$(id -u)" \
+    --env HOST_GID="$(id -g)" \
+    --env PATH=/probe:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    --mount "type=bind,source=$probe_dir,target=/probe,readonly" \
+    --mount "type=bind,source=$key_file,target=/run/docker-agent/cursor-api-key,readonly" \
+    --mount "type=bind,source=$cursor_home,target=/cursor-home" \
+    "$IMAGE" cursor-agent
+
+  [[ -f $cursor_home/projects/probe-project/.workspace-trusted ]] ||
+    fail "the container write did not reach the host Cursor data directory"
+}
+
 test_cursor_agent_runs_from_its_own_bundled_runtime() {
   # The archive ships its own Node; the CLI must not depend on the image one.
   # shellcheck disable=SC2016 # Variables expand inside the container.
@@ -603,6 +641,7 @@ test_mold_is_default_linker_and_sccache_is_available
 test_kimi_notes_reach_the_path_kimi_reads
 test_forwarded_terminal_keeps_its_color_depth
 test_cursor_agent_receives_the_key_without_it_reaching_the_command_line
+test_cursor_shared_data_root_persists_writes_to_the_host
 test_cursor_agent_runs_from_its_own_bundled_runtime
 test_codex_still_sends_the_clipboard_script_the_shim_emulates
 test_powershell_shim_reads_wayland_clipboard_image

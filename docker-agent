@@ -975,7 +975,25 @@ Reading it with 'read -rs' keeps the key off the screen and out of shell history
   )
 }
 
+# Cursor Agent keeps per-project state, including the workspace-trust marker and
+# session history, under $HOME/.cursor/projects. CURSOR_CONFIG_DIR relocates
+# only cli-config.json, so the whole directory has to be shared or every launch
+# looks like a brand new machine. It is mounted at a neutral path and linked
+# into place by the entrypoint, which owns the container home layout.
 configure_cursor_agent_runtime() {
+  local cursor_home_source
+  cursor_home_source=${DOCKER_AGENT_CURSOR_HOME:-$HOME/.cursor}
+  [[ $cursor_home_source == /* ]] ||
+    die "Cursor data directory must be an absolute path: $cursor_home_source"
+  if [[ -e $cursor_home_source && ! -d $cursor_home_source ]]; then
+    die "Cursor data directory is not a directory: $cursor_home_source"
+  fi
+  install -d -m 700 "$cursor_home_source"
+  cursor_home_source=$(cd "$cursor_home_source" && pwd -P)
+  reject_mount_comma "$cursor_home_source"
+  DOCKER_ARGS+=(--mount "type=bind,source=$cursor_home_source,target=/cursor-home")
+  DOCKER_ARGS+=(--env "DOCKER_AGENT_CURSOR_HOME_MOUNT=/cursor-home")
+
   reject_mount_comma "$CURSOR_API_KEY_PATH"
   DOCKER_ARGS+=(--mount "type=bind,source=$CURSOR_API_KEY_PATH,target=/run/docker-agent/cursor-api-key,readonly")
   DOCKER_ARGS+=(--env "DOCKER_AGENT_CURSOR_API_KEY_FILE=/run/docker-agent/cursor-api-key")

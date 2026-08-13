@@ -63,6 +63,29 @@ OAuth 登录状态，**完全不看 `CURSOR_API_KEY`**，所以它们在容器�
 API 账单。额度耗尽后需要在 dashboard 显式开启 on-demand 才能继续，
 建议同时设置 spend limit。选用不同模型会显著影响额度消耗速度。
 
+## 数据目录与工作区信任
+
+Cursor Agent 把每个项目的状态放在 `~/.cursor/projects/<项目 slug>/` 下，
+其中包括工作区信任标记 `.workspace-trusted` 和会话历史。它没有能整体
+重定向数据根的环境变量：`CURSOR_CONFIG_DIR` 只搬 `cli-config.json`，
+`projects/` 仍然固定在 `$HOME/.cursor`。
+
+因此启动器把宿主的
+
+```text
+${DOCKER_AGENT_CURSOR_HOME:-$HOME/.cursor}
+```
+
+挂载到容器的 `/cursor-home`，再由 entrypoint 将容器内的 `$HOME/.cursor`
+符号链接过去。宿主没有该目录时以 `0700` 创建。
+
+如果不做这一步，容器每次退出都会丢掉整个 `.cursor`，于是同一个项目每次
+启动都重新弹出 `Workspace Trust Required`，`--continue` 和 `--resume`
+也永远找不到历史会话。
+
+宿主上装了 Cursor CLI 的话，两边共享同一份数据目录，登录态和信任记录
+互通。
+
 ## 默认权限与自动更新
 
 容器内 Cursor Agent 默认以 `--force` 启动（`--yolo` 是它的别名），

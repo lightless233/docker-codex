@@ -62,6 +62,67 @@ test_api_key_is_mounted_read_only_and_never_passed_as_a_value() {
   assert_not_contains "CURSOR_API_KEY=" "$TEST_DOCKER_LOG"
 }
 
+test_shared_data_root_is_mounted_so_trust_and_sessions_persist() {
+  local TEST_TMP mode
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+  write_api_key
+
+  [[ ! -e $TEST_CURSOR_HOME ]] ||
+    fail "the fake runtime should start without a Cursor data directory"
+
+  run_cursor_launcher "$repo"
+
+  # Cursor stores the workspace-trust marker and session history under
+  # .cursor/projects, so without sharing this directory every launch would
+  # prompt for trust again and lose all history.
+  assert_line "<type=bind,source=$TEST_CURSOR_HOME,target=/cursor-home>" \
+    "$TEST_DOCKER_LOG"
+  assert_line "<DOCKER_AGENT_CURSOR_HOME_MOUNT=/cursor-home>" \
+    "$TEST_DOCKER_LOG"
+  [[ -d $TEST_CURSOR_HOME ]] ||
+    fail "the launcher did not create the Cursor data directory"
+  mode=$(file_mode "$TEST_CURSOR_HOME")
+  [[ $mode == 700 ]] ||
+    fail "the Cursor data directory has mode $mode instead of 700"
+}
+
+test_existing_cursor_data_root_is_reused() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+  write_api_key
+  install -d -m 700 "$TEST_CURSOR_HOME/projects/existing-project"
+  : >"$TEST_CURSOR_HOME/projects/existing-project/.workspace-trusted"
+
+  run_cursor_launcher "$repo"
+
+  assert_line "<type=bind,source=$TEST_CURSOR_HOME,target=/cursor-home>" \
+    "$TEST_DOCKER_LOG"
+  [[ -e $TEST_CURSOR_HOME/projects/existing-project/.workspace-trusted ]] ||
+    fail "the launcher disturbed an existing trust marker"
+}
+
+test_a_file_at_the_cursor_data_root_path_is_rejected() {
+  local TEST_TMP errors
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+  write_api_key
+  errors="$TEST_TMP/errors"
+  : >"$TEST_CURSOR_HOME"
+
+  if run_cursor_launcher "$repo" >"$errors" 2>&1; then
+    fail "a regular file at the data root path unexpectedly succeeded"
+  fi
+  assert_contains "Cursor data directory is not a directory" "$errors"
+}
+
 test_missing_or_unsafe_api_key_is_rejected() {
   local TEST_TMP errors path
   TEST_TMP=$(new_tmp)
@@ -220,6 +281,9 @@ test_help_describes_the_cursor_agent_launcher() {
 
 init_tests
 test_both_entrypoints_dispatch_cursor_agent
+test_shared_data_root_is_mounted_so_trust_and_sessions_persist
+test_existing_cursor_data_root_is_reused
+test_a_file_at_the_cursor_data_root_path_is_rejected
 test_api_key_is_mounted_read_only_and_never_passed_as_a_value
 test_missing_or_unsafe_api_key_is_rejected
 test_caller_supplied_permission_flags_suppress_the_default_force

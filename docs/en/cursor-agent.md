@@ -69,6 +69,29 @@ the included usage is exhausted, on-demand billing must be enabled explicitly
 in the dashboard; setting a spend limit alongside it is advisable. Model choice
 significantly affects how fast the quota is consumed.
 
+## Data directory and workspace trust
+
+Cursor Agent keeps per-project state under `~/.cursor/projects/<project slug>/`,
+including the `.workspace-trusted` marker and session history. It has no
+environment variable that relocates the whole data root: `CURSOR_CONFIG_DIR`
+moves only `cli-config.json`, while `projects/` stays under `$HOME/.cursor`.
+
+The launcher therefore mounts the host
+
+```text
+${DOCKER_AGENT_CURSOR_HOME:-$HOME/.cursor}
+```
+
+at `/cursor-home` and the entrypoint links the container's `$HOME/.cursor` to
+it. The directory is created with mode `0700` when the host does not have one.
+
+Without this the container discards the whole `.cursor` directory on exit, so
+the same project raises `Workspace Trust Required` on every launch and
+`--continue` and `--resume` never find an earlier session.
+
+If Cursor CLI is also installed on the host, both share one data directory, so
+login state and trust decisions carry across.
+
 ## Default permission mode and auto-update
 
 Cursor Agent starts with `--force` (`--yolo` is its alias), auto-approving tool

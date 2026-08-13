@@ -158,6 +158,9 @@ prepare_fake_runtime() {
   # Left uncreated on purpose: the launcher is expected to create the Kimi
   # Code data directory when the host does not have one yet.
   TEST_KIMI_HOME="$base/host kimi"
+  # Same for Cursor Agent, and pointing it here keeps tests away from the
+  # real ~/.cursor on the machine running them.
+  TEST_CURSOR_HOME="$base/host cursor"
   TEST_DOCKER="$base/docker"
   TEST_DOCKER_LOG="$base/docker.log"
   mkdir -p "$TEST_CODEX_HOME"
@@ -177,6 +180,7 @@ run_named_launcher() {
   local agent_data_home
   local host_claude_home=${CLAUDE_CONFIG_DIR:-$TEST_CLAUDE_HOME}
   local host_kimi_home=${KIMI_CODE_HOME:-$TEST_KIMI_HOME}
+  local host_cursor_home=${DOCKER_AGENT_CURSOR_HOME:-$TEST_CURSOR_HOME}
   if [[ -n ${DOCKER_AGENT_DATA_HOME+x} ]]; then
     agent_data_home=$DOCKER_AGENT_DATA_HOME
   elif [[ -n ${DOCKER_CODEX_DATA_HOME+x} ]]; then
@@ -192,6 +196,7 @@ run_named_launcher() {
       DOCKER_AGENT_DATA_HOME="$agent_data_home" \
       CLAUDE_CONFIG_DIR="$host_claude_home" \
       KIMI_CODE_HOME="$host_kimi_home" \
+      DOCKER_AGENT_CURSOR_HOME="$host_cursor_home" \
       DOCKER_AGENT_DOCKER_BIN="$TEST_DOCKER" \
       DOCKER_AGENT_TEST_DOCKER_LOG="$TEST_DOCKER_LOG" \
       "$project_root/$launcher_name" "$@"

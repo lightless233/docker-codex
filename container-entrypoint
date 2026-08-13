@@ -267,6 +267,15 @@ elif [[ ${1:-} == claude ]]; then
     set -- claude --dangerously-skip-permissions "${@:2}"
   fi
 elif [[ ${1:-} == cursor-agent ]]; then
+  # Cursor Agent has no environment variable that relocates its whole data
+  # root, so the shared directory is linked into the container home. Without
+  # it the workspace-trust marker and session history would be recreated on
+  # every launch, and the trust prompt would reappear each time.
+  cursor_home_mount=${DOCKER_AGENT_CURSOR_HOME_MOUNT:-/cursor-home}
+  if [[ -d $cursor_home_mount && ! -e $HOME/.cursor ]]; then
+    ln -s "$cursor_home_mount" "$HOME/.cursor"
+    chown -h "$HOST_UID:$HOST_GID" "$HOME/.cursor"
+  fi
   # The key arrives as a read-only mount rather than an environment variable so
   # it stays out of the docker run arguments and container inspection output.
   key_file=${DOCKER_AGENT_CURSOR_API_KEY_FILE:-/run/docker-agent/cursor-api-key}

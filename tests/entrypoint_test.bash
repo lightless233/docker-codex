@@ -67,7 +67,7 @@ case $name in
     fi
     exit 2
     ;;
-  groupadd|useradd|usermod|mkdir|chown|cp)
+  groupadd|useradd|usermod|mkdir|chown|cp|ln)
     exit 0
     ;;
   gosu)
@@ -108,7 +108,7 @@ esac
 exit 2
 EOF
   chmod +x "$fake_bin/fake-command"
-  for command in getent groupadd useradd usermod mkdir chown cp gosu setpriv codex claude kimi cursor-agent custom-command; do
+  for command in getent groupadd useradd usermod mkdir chown cp ln gosu setpriv codex claude kimi cursor-agent custom-command; do
     ln -s fake-command "$fake_bin/$command"
   done
 }
@@ -721,6 +721,50 @@ test_cursor_api_key_is_read_from_the_mounted_file() {
   assert_line "<--force>" "$log"
 }
 
+test_cursor_shared_data_root_is_linked_into_the_container_home() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local fake_bin="$TEST_TMP/bin"
+  local log="$TEST_TMP/system.log"
+  local key_file="$TEST_TMP/cursor-api-key"
+  local mount_dir="$TEST_TMP/cursor-home"
+  : >"$log"
+  make_fake_system_commands "$fake_bin"
+  printf '%s\n' 'key-from-file' >"$key_file"
+  mkdir -p "$mount_dir"
+
+  DOCKER_AGENT_CURSOR_API_KEY_FILE="$key_file" \
+    DOCKER_AGENT_CURSOR_HOME_MOUNT="$mount_dir" \
+    FAKE_GROUP_EXISTS=1 FAKE_PASSWD_EXISTS=1 \
+    run_entrypoint "$fake_bin" "$log" cursor-agent
+
+  # Without this link the workspace-trust marker and session history under
+  # .cursor/projects would be recreated on every launch.
+  assert_contiguous_lines "$log" \
+    "<CALL:ln>" "<-s>" "<$mount_dir>" "</home/codex/.cursor>"
+  assert_contiguous_lines "$log" \
+    "<CALL:chown>" "<-h>" "<12345:23456>" "</home/codex/.cursor>"
+}
+
+test_cursor_link_is_skipped_when_the_mount_is_absent() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local fake_bin="$TEST_TMP/bin"
+  local log="$TEST_TMP/system.log"
+  local key_file="$TEST_TMP/cursor-api-key"
+  : >"$log"
+  make_fake_system_commands "$fake_bin"
+  printf '%s\n' 'key-from-file' >"$key_file"
+
+  DOCKER_AGENT_CURSOR_API_KEY_FILE="$key_file" \
+    DOCKER_AGENT_CURSOR_HOME_MOUNT="$TEST_TMP/absent" \
+    FAKE_GROUP_EXISTS=1 FAKE_PASSWD_EXISTS=1 \
+    run_entrypoint "$fake_bin" "$log" cursor-agent
+
+  assert_no_line "<CALL:ln>" "$log"
+  assert_line "<ENV_CURSOR_API_KEY:key-from-file>" "$log"
+}
+
 test_cursor_missing_or_empty_key_fails_before_launching() {
   local TEST_TMP status
   TEST_TMP=$(new_tmp)
@@ -783,6 +827,8 @@ test_kimi_data_root_and_notes_are_prepared
 test_kimi_keeps_an_explicit_data_root_and_skips_missing_notes
 test_kimi_environment_policy_does_not_change_other_commands
 test_cursor_api_key_is_read_from_the_mounted_file
+test_cursor_shared_data_root_is_linked_into_the_container_home
+test_cursor_link_is_skipped_when_the_mount_is_absent
 test_cursor_missing_or_empty_key_fails_before_launching
 test_cursor_key_is_not_exported_for_other_agents
 test_unknown_terminal_falls_back_without_losing_color_depth
