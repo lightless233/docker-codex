@@ -2,9 +2,9 @@
 
 [简体中文](README.md) | **English**
 
-Run Codex CLI, Claude Code, or Kimi Code in one Docker image. The container
-mounts the current project directory, so agent edits land directly on host
-files. For a Git checkout, the unified launcher also manages Git metadata,
+Run Codex CLI, Claude Code, Kimi Code, or Cursor Agent in one Docker image. The
+container mounts the current project directory, so agent edits land directly on
+host files. For a Git checkout, the unified launcher also manages Git metadata,
 build caches, optional worktrees, and clipboard forwarding. The original
 `docker-codex` command remains compatible.
 
@@ -32,12 +32,16 @@ docker-agent codex
 docker-agent claude
 docker-agent claude --profile deepseek
 docker-agent kimi
+docker-agent cursor-agent
 ```
 
 `docker-codex` is equivalent to `docker-agent codex`, `docker-claude` to
-`docker-agent claude`, and `docker-kimi` to `docker-agent kimi`. Without
-`sudo`, run `./install.sh --prefix "$HOME/.local"` to install under
-`$HOME/.local/bin`.
+`docker-agent claude`, `docker-kimi` to `docker-agent kimi`, and
+`docker-cursor-agent` to `docker-agent cursor-agent`. Without `sudo`, run
+`./install.sh --prefix "$HOME/.local"` to install under `$HOME/.local/bin`.
+
+Cursor Agent needs an API key file prepared first; see
+[Cursor Agent integration](docs/en/cursor-agent.md).
 
 The launcher creates and joins a shared `docker-agent` bridge network by
 default. To make a development service such as PostgreSQL available to an
@@ -53,7 +57,8 @@ model is not configured.
 
 > [!WARNING]
 > Codex and Kimi Code run with `--yolo`; Claude Code runs with
-> `--dangerously-skip-permissions`. The selected agent receives the current
+> `--dangerously-skip-permissions`; Cursor Agent runs with `--force`.
+> The selected agent receives the current
 > project directory, required Git metadata, and explicitly selected credentials. Use
 > this only with projects you trust.
 > `--host-docker` additionally gives the agent root-equivalent control of the
@@ -77,6 +82,7 @@ docker-agent codex --network another-development-network
 docker-agent claude --host-docker --profile deepseek
 docker-agent kimi -- --model kimi-k3
 docker-agent kimi --isolated issue-123
+docker-agent cursor-agent -- -p "Review this branch" --output-format json
 ```
 
 ## Command-line options
@@ -150,12 +156,14 @@ mounting, state isolation, UTC/locale policy, and security details.
 
 Kimi Code has no matching selectors. It shares the host data root, which holds
 its login, providers, and sessions; see
-[Kimi Code integration](docs/en/kimi.md).
+[Kimi Code integration](docs/en/kimi.md). Cursor Agent uses a protected API key
+file; see [Cursor Agent integration](docs/en/cursor-agent.md).
 
 ## Docs
 
 - [Claude Code integration](docs/en/claude.md): menus, profiles, OAuth, state, cleanup.
 - [Kimi Code integration](docs/en/kimi.md): shared data root, login, default permission, notes.
+- [Cursor Agent integration](docs/en/cursor-agent.md): API key, default permission, worktree caveat.
 - [Checkout and worktrees](docs/en/worktree.md): mount rules, `--isolated`, `--bind`.
 - [Authentication and credentials](docs/en/credentials.md): Codex home, Claude credentials, Git push.
 - [Image environment and build caches](docs/en/environment.md): toolchain, locale, cache volumes.

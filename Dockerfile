@@ -4,6 +4,11 @@ ARG NODE_VERSION=24.19.0
 ARG CODEX_VERSION=0.147.0
 ARG CLAUDE_CODE_VERSION=2.1.229
 ARG KIMI_CODE_VERSION=0.36.0
+ARG CURSOR_AGENT_VERSION=2026.08.11-e8db854
+# Cursor publishes no checksum for the CLI archive, so this digest is recorded
+# here to keep the download verifiable; update it together with the version.
+ARG CURSOR_AGENT_SHA256_AMD64=bfff4bf6f4e9dd30c1d0ef0a70b6077b074015dd2948e4c50685d53afdcfce5a
+ARG CURSOR_AGENT_SHA256_ARM64=ea13f92e295f523a99ce8d8f57d6894d21e5d1e2d030ffad718ccd5955ca2eed
 ARG PNPM_VERSION=11.21.0
 ARG TARGETARCH
 
@@ -106,6 +111,29 @@ RUN npm install --global \
     && claude --version \
     && kimi --version \
     && pnpm --version
+
+# Cursor Agent ships as a self-contained archive with its own Node runtime, so
+# it is installed outside the npm layer. The upstream install script is not used
+# because it resolves a floating version and edits shell rc files.
+RUN set -eux; \
+    target_arch="${TARGETARCH:-$(dpkg --print-architecture)}"; \
+    case "$target_arch" in \
+      amd64) cursor_arch=x64; cursor_sha="$CURSOR_AGENT_SHA256_AMD64" ;; \
+      arm64) cursor_arch=arm64; cursor_sha="$CURSOR_AGENT_SHA256_ARM64" ;; \
+      *) printf 'unsupported target architecture: %s\n' "$target_arch" >&2; exit 1 ;; \
+    esac; \
+    archive=$(mktemp); \
+    curl --proto '=https' --tlsv1.2 --silent --show-error --fail \
+      --output "$archive" \
+      "https://downloads.cursor.com/lab/${CURSOR_AGENT_VERSION}/linux/${cursor_arch}/agent-cli-package.tar.gz"; \
+    printf '%s  %s\n' "$cursor_sha" "$archive" | sha256sum --check -; \
+    install -d -m 0755 /opt/cursor-agent; \
+    tar --extract --gzip --file "$archive" --directory /opt/cursor-agent \
+      --strip-components=1 --no-same-owner; \
+    rm -f "$archive"; \
+    ln -s /opt/cursor-agent/cursor-agent /usr/local/bin/cursor-agent; \
+    ln -s /opt/cursor-agent/cursor-agent /usr/local/bin/agent; \
+    cursor-agent --version
 
 # Keep Docker client tooling in its own late layer. Changing these packages
 # should not invalidate the more expensive Node, Rust, Codex, and Claude layers.

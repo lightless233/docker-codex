@@ -13,12 +13,24 @@ docker build \
   --build-arg CODEX_VERSION=0.147.0 \
   --build-arg CLAUDE_CODE_VERSION=2.1.229 \
   --build-arg KIMI_CODE_VERSION=0.36.0 \
+  --build-arg CURSOR_AGENT_VERSION=2026.08.11-e8db854 \
   --build-arg PNPM_VERSION=11.21.0 \
   -t docker-agent:local .
 ```
 
 `NODE_VERSION` 只会通过显式 build arg 或代码修改升级。镜像不会从 Debian
 或第三方软件源安装 Node.js/npm。
+
+升级 `CURSOR_AGENT_VERSION` 时必须同步更新 Dockerfile 中的
+`CURSOR_AGENT_SHA256_AMD64` 和 `CURSOR_AGENT_SHA256_ARM64`。Cursor 官方
+不发布校验和，这两个值由本项目自行记录，可以这样重新计算：
+
+```bash
+for arch in x64 arm64; do
+  curl -fsSL "https://downloads.cursor.com/lab/VERSION/linux/$arch/agent-cli-package.tar.gz" |
+    sha256sum
+done
+```
 
 ## 验证
 

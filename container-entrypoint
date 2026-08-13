@@ -257,6 +257,20 @@ elif [[ ${1:-} == claude ]]; then
   else
     set -- claude --dangerously-skip-permissions "${@:2}"
   fi
+elif [[ ${1:-} == cursor-agent ]]; then
+  # The key arrives as a read-only mount rather than an environment variable so
+  # it stays out of the docker run arguments and container inspection output.
+  key_file=${DOCKER_AGENT_CURSOR_API_KEY_FILE:-/run/docker-agent/cursor-api-key}
+  [[ -r $key_file ]] || {
+    printf 'docker-agent: Cursor API key is not readable: %s\n' "$key_file" >&2
+    exit 1
+  }
+  CURSOR_API_KEY=$(tr -d '\r\n' <"$key_file")
+  [[ -n $CURSOR_API_KEY ]] || {
+    printf 'docker-agent: Cursor API key file is empty: %s\n' "$key_file" >&2
+    exit 1
+  }
+  export CURSOR_API_KEY
 elif [[ ${1:-} == kimi ]]; then
   export KIMI_CODE_HOME=${KIMI_CODE_HOME:-/kimi-home}
   # Kimi Code has no flag that appends to the system prompt. It does merge

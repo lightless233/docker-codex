@@ -10,15 +10,16 @@ die() {
 
 usage_agent() {
   cat <<'EOF'
-Usage: docker-agent {codex|claude|kimi} [options] [--] [agent args...]
+Usage: docker-agent {codex|claude|kimi|cursor-agent} [options] [--] [agent args...]
 
-Run Codex, Claude Code, or Kimi Code in Docker against the current project
-directory.
+Run Codex, Claude Code, Kimi Code, or Cursor Agent in Docker against the
+current project directory.
 
 Commands:
-  docker-agent codex       Run Codex
-  docker-agent claude      Run Claude Code
-  docker-agent kimi        Run Kimi Code
+  docker-agent codex         Run Codex
+  docker-agent claude        Run Claude Code
+  docker-agent kimi          Run Kimi Code
+  docker-agent cursor-agent  Run Cursor Agent
 
 Use "docker-agent AGENT --help" for agent-specific options.
 EOF
@@ -126,10 +127,50 @@ Isolated worktrees and their branches are retained after the container exits.
 EOF
 }
 
+usage_cursor_agent() {
+  cat <<'EOF'
+Usage: docker-cursor-agent [options] [--] [cursor agent args...]
+       docker-agent cursor-agent [options] [--] [cursor agent args...]
+
+Run Cursor Agent in Docker against the current project directory.
+
+Options:
+  --build                 Build the image before launching
+  --image IMAGE           Image to use (default: docker-agent:local)
+  --isolated NAME         In Git, create branch codex/NAME in a retained worktree
+  --bind PATH[:ro]        Bind an absolute directory at the same container path
+                          (repeatable; append :ro for read-only)
+  --env NAME[=VALUE]      Set or inherit a container environment variable
+                          (repeatable; NAME without VALUE inherits from host)
+  --network NETWORK       Also connect to a Docker network (repeatable)
+  --disable-default-network
+                          Do not connect to the shared docker-agent network
+  --host-docker           Give the agent full control of the host Docker daemon
+  --pat TOKEN             Provide a git access token directly
+  --pat-path FILE         Mount a git access token file
+  --disable-clipboard     Do not forward host display sockets
+  --help, -h              Show this help
+
+Authentication uses an API key read from a protected host file:
+  ${DOCKER_AGENT_CONFIG_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/docker-agent}/cursor-agent/api-key
+Create it with mode 600, owned by you, holding only the key:
+  install -d -m 700 "$(dirname FILE)"
+  install -m 600 /dev/null FILE
+The key is mounted read-only and exported as CURSOR_API_KEY in the container;
+it never appears in the docker run arguments.
+
+Cursor Agent starts with --force unless the passed arguments already select a
+permission mode. Auto-updates are disabled so the pinned version is used.
+Arguments after -- are passed to Cursor Agent without reinterpretation.
+Isolated worktrees and their branches are retained after the container exits.
+EOF
+}
+
 # Agents are dispatched by name. Adding one means appending it here and
-# defining the matching usage_NAME, prepare_NAME_launch, configure_NAME_runtime,
-# and NAME_final_args functions.
-SUPPORTED_AGENTS="codex claude kimi"
+# defining the matching usage_SLUG, prepare_SLUG_launch, configure_SLUG_runtime,
+# and SLUG_final_args functions, where SLUG is the agent name with every hyphen
+# replaced by an underscore so it is a portable function-name component.
+SUPPORTED_AGENTS="codex claude kimi cursor-agent"
 
 agent_is_supported() {
   local candidate=$1 name
@@ -159,6 +200,7 @@ case $PROGRAM_NAME in
     ;;
 esac
 agent_is_supported "$AGENT" || die "unsupported agent: $AGENT"
+AGENT_SLUG=${AGENT//-/_}
 
 path_is_within() {
   local child=$1 parent=$2
@@ -905,6 +947,88 @@ kimi_final_args() {
   fi
 }
 
+# Cursor Agent authenticates from CURSOR_API_KEY. Its own `status` and `whoami`
+# subcommands only report the local OAuth login and ignore that variable, so a
+# key cannot be verified before launching; the file is validated instead.
+resolve_cursor_agent_launch() {
+  local config_root key_dir
+  config_root=${DOCKER_AGENT_CONFIG_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/docker-agent}
+  key_dir="$config_root/cursor-agent"
+  CURSOR_API_KEY_PATH="$key_dir/api-key"
+  [[ -e $CURSOR_API_KEY_PATH ]] ||
+    die "Cursor API key does not exist: $CURSOR_API_KEY_PATH
+Generate a key at https://cursor.com/dashboard/api, then store it with:
+  install -d -m 700 \"$key_dir\"
+  install -m 600 /dev/null \"$CURSOR_API_KEY_PATH\"
+  read -rs key && printf '%s' \"\$key\" > \"$CURSOR_API_KEY_PATH\" && unset key
+Reading it with 'read -rs' keeps the key off the screen and out of shell history."
+  validate_owned_mode_600_file "$CURSOR_API_KEY_PATH" "Cursor API key"
+  [[ -s $CURSOR_API_KEY_PATH ]] ||
+    die "Cursor API key file is empty: $CURSOR_API_KEY_PATH"
+  CURSOR_API_KEY_PATH=$(
+    cd "$(dirname "$CURSOR_API_KEY_PATH")" &&
+      printf '%s/%s\n' "$(pwd -P)" "$(basename "$CURSOR_API_KEY_PATH")"
+  )
+}
+
+configure_cursor_agent_runtime() {
+  reject_mount_comma "$CURSOR_API_KEY_PATH"
+  DOCKER_ARGS+=(--mount "type=bind,source=$CURSOR_API_KEY_PATH,target=/run/docker-agent/cursor-api-key,readonly")
+  DOCKER_ARGS+=(--env "DOCKER_AGENT_CURSOR_API_KEY_FILE=/run/docker-agent/cursor-api-key")
+}
+
+cursor_agent_selects_own_mode() {
+  local arg
+  for arg in "${AGENT_ARGS[@]}"; do
+    case $arg in
+      -f|--force|--yolo|--auto-review)
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
+# The CLI's own -w/--worktree creates the worktree under the container-private
+# HOME, so its edits vanish with the container while the host repository keeps a
+# prunable worktree registration and the new branch. The launcher still passes
+# the flag through, but says so first.
+warn_cursor_agent_worktree() {
+  local arg
+  for arg in "${AGENT_ARGS[@]}"; do
+    case $arg in
+      -w|--worktree|--worktree=*)
+        cat >&2 <<'EOF'
+================================================================================
+WARNING: CURSOR AGENT WORKTREE / Cursor Agent 自带 worktree
+
+-w/--worktree creates the worktree inside the container, so every edit made
+there is lost when the container exits, and the host repository is left with a
+prunable worktree entry plus the new branch.
+该选项在容器内创建 worktree：容器退出后其中的修改全部丢失，宿主仓库则会
+残留一条失效的 worktree 记录和新分支。
+
+Use --isolated NAME instead to get a worktree that lives on the host.
+请改用 --isolated NAME，它在宿主上创建可保留的 worktree。
+================================================================================
+EOF
+        return 0
+        ;;
+    esac
+  done
+}
+
+cursor_agent_final_args() {
+  warn_cursor_agent_worktree
+  # --disable-auto-update is a hidden flag; without it the pinned version in the
+  # image can replace itself at runtime.
+  if cursor_agent_selects_own_mode; then
+    FINAL_ARGS=(cursor-agent --disable-auto-update "${AGENT_ARGS[@]}")
+  else
+    FINAL_ARGS=(cursor-agent --disable-auto-update --force "${AGENT_ARGS[@]}")
+  fi
+}
+
 DOCKER_BIN=${DOCKER_AGENT_DOCKER_BIN:-${DOCKER_CODEX_DOCKER_BIN:-docker}}
 IMAGE=${DOCKER_AGENT_IMAGE:-${DOCKER_CODEX_IMAGE:-docker-agent:local}}
 HOST_OS=${DOCKER_AGENT_HOST_OS:-${DOCKER_CODEX_HOST_OS:-$(uname -s)}}
@@ -929,6 +1053,7 @@ CLAUDE_PROFILE_NAME=
 CLAUDE_PROFILE_PATH=
 CLAUDE_CREDENTIAL_PATH=
 CLAUDE_STATE_DIR=
+CURSOR_API_KEY_PATH=
 MENU_SELECTION=0
 AGENT_ARGS=()
 HAS_GIT=0
@@ -1024,7 +1149,7 @@ while (($#)); do
       break
       ;;
     --help|-h)
-      "usage_$AGENT"
+      "usage_$AGENT_SLUG"
       exit 0
       ;;
     *)
@@ -1077,7 +1202,7 @@ if [[ -n $ISOLATED ]] && ((HAS_GIT == 0)); then
   die "--isolated requires a Git checkout"
 fi
 
-run_agent_hook "resolve_${AGENT}_launch"
+run_agent_hook "resolve_${AGENT_SLUG}_launch"
 
 if ((HAS_GIT)); then
   COMMON_DIR=$(git rev-parse --path-format=absolute --git-common-dir)
@@ -1096,7 +1221,7 @@ if [[ -n $ISOLATED ]]; then
   GIT_DIR=$(git -C "$CHECKOUT_ROOT" rev-parse --path-format=absolute --git-dir)
   GIT_DIR=$(cd "$GIT_DIR" && pwd -P)
 fi
-run_agent_hook "prepare_${AGENT}_state_hook"
+run_agent_hook "prepare_${AGENT_SLUG}_state_hook"
 REPO_ID=$(repo_id_for "$COMMON_DIR")
 
 DOCKER_ARGS=(run --rm)
@@ -1132,7 +1257,7 @@ if ((${#ENV_OVERRIDE_KEYS[@]})); then
   DOCKER_ARGS+=(--env "DOCKER_AGENT_ENV_OVERRIDE_KEYS=$env_override_key_list")
 fi
 append_same_path_mount "$CHECKOUT_ROOT"
-"configure_${AGENT}_runtime"
+"configure_${AGENT_SLUG}_runtime"
 DOCKER_ARGS+=(--mount "type=volume,source=docker-codex-cache-$REPO_ID,target=/codex-cache")
 
 if [[ -n $PAT_VALUE ]]; then
@@ -1269,6 +1394,6 @@ else
 fi
 
 FINAL_ARGS=()
-"${AGENT}_final_args"
+"${AGENT_SLUG}_final_args"
 
 exec "$DOCKER_BIN" "${DOCKER_ARGS[@]}" "$IMAGE" "${FINAL_ARGS[@]}"

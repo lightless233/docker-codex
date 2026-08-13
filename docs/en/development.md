@@ -14,12 +14,25 @@ docker build \
   --build-arg CODEX_VERSION=0.147.0 \
   --build-arg CLAUDE_CODE_VERSION=2.1.229 \
   --build-arg KIMI_CODE_VERSION=0.36.0 \
+  --build-arg CURSOR_AGENT_VERSION=2026.08.11-e8db854 \
   --build-arg PNPM_VERSION=11.21.0 \
   -t docker-agent:local .
 ```
 
 `NODE_VERSION` upgrades are explicit. The image does not install Node.js or npm
 from Debian or third-party package repositories.
+
+Bumping `CURSOR_AGENT_VERSION` requires updating `CURSOR_AGENT_SHA256_AMD64`
+and `CURSOR_AGENT_SHA256_ARM64` in the Dockerfile in the same change. Cursor
+publishes no checksum, so those digests are maintained here and can be
+recomputed with:
+
+```bash
+for arch in x64 arm64; do
+  curl -fsSL "https://downloads.cursor.com/lab/VERSION/linux/$arch/agent-cli-package.tar.gz" |
+    sha256sum
+done
+```
 
 ## Verification
 

@@ -11,7 +11,8 @@ The image uses Debian 13 slim and installs Node.js 24.19.0 LTS from the
 official nodejs.org linux-x64/linux-arm64 archive after checking it against
 the release's `SHASUMS256.txt`. It also contains pnpm, Rust stable (with
 rustfmt and clippy), Codex CLI, Git, Python 3 (pip and venv), common native
-build dependencies, Claude Code, Kimi Code, Docker CLI, Buildx, Compose, and shell
+build dependencies, Claude Code, Kimi Code, Cursor Agent (self-contained under
+`/opt/cursor-agent`), Docker CLI, Buildx, Compose, and shell
 utilities useful during agentic development. It ships Docker clients only,
 not `dockerd`; they can reach the host daemon only when `--host-docker`
 explicitly mounts its Unix socket. The image generates the `en_US.UTF-8`

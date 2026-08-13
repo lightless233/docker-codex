@@ -2,7 +2,8 @@
 
 This page explains the authentication boundaries for Codex and Claude Code,
 and how to explicitly provide Git push credentials. Kimi Code shares its whole
-data root instead; see [Kimi Code integration](kimi.md).
+data root instead; see [Kimi Code integration](kimi.md). Cursor Agent uses a
+protected API key file; see [Cursor Agent integration](cursor-agent.md).
 
 ## Codex configuration, memory, and authentication
 

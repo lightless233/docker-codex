@@ -2,10 +2,10 @@
 
 **简体中文** | [English](README.en.md)
 
-在同一个 Docker 镜像里运行 Codex CLI、Claude Code 或 Kimi Code。容器挂载
-当前项目目录，agent 的修改直接落在宿主文件上；如果项目是 Git checkout，
-启动器还会管理 Git metadata、构建缓存、可选 worktree 和剪贴板转发。原有
-`docker-codex` 命令继续兼容。
+在同一个 Docker 镜像里运行 Codex CLI、Claude Code、Kimi Code 或 Cursor
+Agent。容器挂载当前项目目录，agent 的修改直接落在宿主文件上；如果项目是
+Git checkout，启动器还会管理 Git metadata、构建缓存、可选 worktree 和
+剪贴板转发。原有 `docker-codex` 命令继续兼容。
 
 ## 快速开始
 
@@ -30,12 +30,17 @@ docker-agent codex
 docker-agent claude
 docker-agent claude --profile deepseek
 docker-agent kimi
+docker-agent cursor-agent
 ```
 
 `docker-codex` 等价于 `docker-agent codex`，`docker-claude` 等价于
-`docker-agent claude`，`docker-kimi` 等价于 `docker-agent kimi`。没有
-`sudo` 时，运行 `./install.sh --prefix "$HOME/.local"` 安装到
+`docker-agent claude`，`docker-kimi` 等价于 `docker-agent kimi`，
+`docker-cursor-agent` 等价于 `docker-agent cursor-agent`。没有 `sudo`
+时，运行 `./install.sh --prefix "$HOME/.local"` 安装到
 `$HOME/.local/bin`。
+
+Cursor Agent 需要先准备一个 API key 文件，见
+[Cursor Agent 集成](docs/zh/cursor-agent.md)。
 
 启动器默认创建并加入共享的 `docker-agent` bridge 网络。需要让
 PostgreSQL 等开发服务被 agent 访问时，启动该容器时同样指定
@@ -48,7 +53,8 @@ key、自定义 endpoint；选择自定义 endpoint 后再显示按名称排序�
 
 > [!WARNING]
 > Codex 与 Kimi Code 默认使用 `--yolo`，Claude Code 默认使用
-> `--dangerously-skip-permissions`。当前项目目录、必要的 Git metadata 和
+> `--dangerously-skip-permissions`，Cursor Agent 默认使用 `--force`。
+> 当前项目目录、必要的 Git metadata 和
 > 显式凭证会按用途挂载给所选 agent；请只在信任的项目中使用。
 > `--host-docker` 还会让 agent 获得宿主 Docker 的 root 级控制权，包括
 > 挂载任意宿主路径的能力；启用时启动器会在每次启动前显示大幅警告。
@@ -70,6 +76,7 @@ docker-agent codex --network another-development-network
 docker-agent claude --host-docker --profile deepseek
 docker-agent kimi -- --model kimi-k3
 docker-agent kimi --isolated issue-123
+docker-agent cursor-agent -- -p "总结当前分支的改动" --output-format json
 ```
 
 ## 命令行选项
@@ -138,12 +145,15 @@ profile 创建、OAuth 挂载、状态隔离、UTC/locale 和安全边界详见
 [Claude Code 集成](docs/zh/claude.md)。
 
 Kimi Code 没有对应的连接选择器：它共享宿主的数据根，登录、provider 和
-会话都保存在其中，详见 [Kimi Code 集成](docs/zh/kimi.md)。
+会话都保存在其中，详见 [Kimi Code 集成](docs/zh/kimi.md)。Cursor Agent
+使用受保护的 API key 文件，详见
+[Cursor Agent 集成](docs/zh/cursor-agent.md)。
 
 ## 文档
 
 - [Claude Code 集成](docs/zh/claude.md)：连接菜单、profile、OAuth、状态与清理。
 - [Kimi Code 集成](docs/zh/kimi.md)：数据根共享、登录、默认权限与指令注入。
+- [Cursor Agent 集成](docs/zh/cursor-agent.md)：API key、默认权限、worktree 注意事项。
 - [Checkout 与 worktree](docs/zh/worktree.md)：挂载规则、`--isolated`、`--bind`。
 - [认证与凭证](docs/zh/credentials.md)：Codex home、Claude 凭证、Git push。
 - [镜像环境与构建缓存](docs/zh/environment.md)：工具链、locale、缓存 volume。

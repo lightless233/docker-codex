@@ -121,6 +121,9 @@ test_claude_code_and_locale_are_installed() {
     codex --version | grep -Fx "codex-cli 0.147.0" >/dev/null
     claude --version | grep -F "2.1.229" >/dev/null
     kimi --version | grep -Fx "0.36.0" >/dev/null
+    cursor-agent --version | grep -Fx "2026.08.11-e8db854" >/dev/null
+    # The upstream installer exposes both names; keep the alias working.
+    agent --version | grep -Fx "2026.08.11-e8db854" >/dev/null
     locale -a | grep -Fxi "en_US.utf8" >/dev/null
     LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 locale charmap |
       grep -Fx "UTF-8" >/dev/null
@@ -442,6 +445,50 @@ test_kimi_notes_reach_the_path_kimi_reads() {
     "$IMAGE" kimi --yolo
 }
 
+test_cursor_agent_receives_the_key_without_it_reaching_the_command_line() {
+  # The entrypoint must turn the read-only key mount into CURSOR_API_KEY. The
+  # probe stands in for the real CLI so no request is billed.
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local probe_dir="$TEST_TMP/probe"
+  local key_file="$TEST_TMP/cursor-api-key"
+  install -d -m 755 "$probe_dir"
+  install -m 600 /dev/null "$key_file"
+  printf '%s\n' 'image-test-key' >"$key_file"
+  # shellcheck disable=SC2016 # Variables expand when the generated probe runs.
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    '[[ $(id -u) == 12345 ]]' \
+    '[[ $CURSOR_API_KEY == image-test-key ]]' \
+    '[[ ${1:-} == --disable-auto-update ]]' \
+    '[[ ${2:-} == --force ]]' \
+    >"$probe_dir/cursor-agent"
+  chmod 0755 "$probe_dir/cursor-agent"
+
+  "$DOCKER_BIN" run --rm \
+    --env HOST_UID=12345 \
+    --env HOST_GID=23456 \
+    --env PATH=/probe:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    --mount "type=bind,source=$probe_dir,target=/probe,readonly" \
+    --mount "type=bind,source=$key_file,target=/run/docker-agent/cursor-api-key,readonly" \
+    "$IMAGE" cursor-agent --disable-auto-update --force
+}
+
+test_cursor_agent_runs_from_its_own_bundled_runtime() {
+  # The archive ships its own Node; the CLI must not depend on the image one.
+  # shellcheck disable=SC2016 # Variables expand inside the container.
+  "$DOCKER_BIN" run --rm --entrypoint bash "$IMAGE" -lc '
+    set -euo pipefail
+    [[ -x /opt/cursor-agent/node ]]
+    [[ $(readlink -f "$(command -v cursor-agent)") == /opt/cursor-agent/cursor-agent ]]
+    [[ $(readlink -f "$(command -v agent)") == /opt/cursor-agent/cursor-agent ]]
+    /opt/cursor-agent/node --version | grep -E "^v[0-9]+" >/dev/null
+    # /usr/local/bin holds the image Node; the CLI must work without it.
+    PATH=/usr/bin:/bin /opt/cursor-agent/cursor-agent --version >/dev/null
+  '
+}
+
 test_codex_still_sends_the_clipboard_script_the_shim_emulates() {
   # The shim is coupled to Codex internals, so a Codex upgrade can silently
   # break clipboard paste. Read the script out of the pinned build instead of
@@ -524,6 +571,8 @@ test_python_and_archive_tools_are_available
 test_agent_notes_are_readable_by_runtime_user
 test_mold_is_default_linker_and_sccache_is_available
 test_kimi_notes_reach_the_path_kimi_reads
+test_cursor_agent_receives_the_key_without_it_reaching_the_command_line
+test_cursor_agent_runs_from_its_own_bundled_runtime
 test_codex_still_sends_the_clipboard_script_the_shim_emulates
 test_powershell_shim_reads_wayland_clipboard_image
 printf 'image tests: PASS\n'

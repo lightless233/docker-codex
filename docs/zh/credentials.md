@@ -2,7 +2,8 @@
 
 本文说明 Codex 与 Claude Code 的认证边界，以及如何显式地向容器提供 Git
 推送凭证。配置认证或需要从容器内 `git push` 时阅读本文。Kimi Code 共享
-整个数据根，认证方式见 [Kimi Code 集成](kimi.md)。
+整个数据根，认证方式见 [Kimi Code 集成](kimi.md)；Cursor Agent 使用
+受保护的 API key 文件，见 [Cursor Agent 集成](cursor-agent.md)。
 
 ## Codex 配置、记忆与认证
 

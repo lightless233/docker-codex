@@ -10,7 +10,8 @@
 linux-x64 或 linux-arm64 压缩包安装，并使用该版本发布目录中的
 `SHASUMS256.txt` 校验。镜像还包含 pnpm、Rust stable（含 rustfmt 与
 clippy）、Codex CLI、Git、Python 3（pip 与 venv）、常用本地编译依赖，
-Claude Code、Kimi Code、Docker CLI、Buildx、Compose，以及适合 agent 开发使用的
+Claude Code、Kimi Code、Cursor Agent（自带运行时，位于 `/opt/cursor-agent`）、
+Docker CLI、Buildx、Compose，以及适合 agent 开发使用的
 shell 工具。镜像只包含 Docker 客户端，不包含 `dockerd`；只有显式使用
 `--host-docker` 时，客户端才能通过挂载的 Unix socket 访问宿主 Docker。
 镜像生成 `en_US.UTF-8` locale，并在 `/etc/profile.d` 中保留 Cargo 与

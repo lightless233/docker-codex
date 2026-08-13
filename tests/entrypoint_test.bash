@@ -89,6 +89,10 @@ case $name in
     printf '<ENV_HOME:%s>\n' "${HOME:-}" >>"$log"
     exit "${FAKE_FINAL_STATUS:-0}"
     ;;
+  cursor-agent)
+    printf '<ENV_CURSOR_API_KEY:%s>\n' "${CURSOR_API_KEY:-}" >>"$log"
+    exit "${FAKE_FINAL_STATUS:-0}"
+    ;;
   codex|custom-command)
     printf '<ENV_USER:%s>\n' "${USER:-}" >>"$log"
     printf '<ENV_CARGO_HOME:%s>\n' "${CARGO_HOME:-}" >>"$log"
@@ -103,7 +107,7 @@ esac
 exit 2
 EOF
   chmod +x "$fake_bin/fake-command"
-  for command in getent groupadd useradd usermod mkdir chown cp gosu setpriv codex claude kimi custom-command; do
+  for command in getent groupadd useradd usermod mkdir chown cp gosu setpriv codex claude kimi cursor-agent custom-command; do
     ln -s fake-command "$fake_bin/$command"
   done
 }
@@ -667,6 +671,69 @@ test_kimi_environment_policy_does_not_change_other_commands() {
   assert_no_line "<CALL:cp>" "$log"
 }
 
+test_cursor_api_key_is_read_from_the_mounted_file() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local fake_bin="$TEST_TMP/bin"
+  local log="$TEST_TMP/system.log"
+  local key_file="$TEST_TMP/cursor-api-key"
+  : >"$log"
+  make_fake_system_commands "$fake_bin"
+  # A trailing newline is normal in a file written by an editor.
+  printf '%s\n' 'key-from-file' >"$key_file"
+
+  DOCKER_AGENT_CURSOR_API_KEY_FILE="$key_file" \
+    FAKE_GROUP_EXISTS=1 FAKE_PASSWD_EXISTS=1 \
+    run_entrypoint "$fake_bin" "$log" cursor-agent --force
+
+  assert_line "<ENV_CURSOR_API_KEY:key-from-file>" "$log"
+  assert_line "<--force>" "$log"
+}
+
+test_cursor_missing_or_empty_key_fails_before_launching() {
+  local TEST_TMP status
+  TEST_TMP=$(new_tmp)
+  local fake_bin="$TEST_TMP/bin"
+  local log="$TEST_TMP/system.log"
+  local errors="$TEST_TMP/errors"
+  local key_file="$TEST_TMP/cursor-api-key"
+  : >"$log"
+  make_fake_system_commands "$fake_bin"
+
+  status=0
+  DOCKER_AGENT_CURSOR_API_KEY_FILE="$TEST_TMP/absent" \
+    FAKE_GROUP_EXISTS=1 FAKE_PASSWD_EXISTS=1 \
+    run_entrypoint "$fake_bin" "$log" cursor-agent >"$errors" 2>&1 || status=$?
+  ((status != 0)) || fail "a missing key file unexpectedly succeeded"
+  assert_contains "Cursor API key is not readable" "$errors"
+  assert_no_line "<CALL:cursor-agent>" "$log"
+
+  : >"$key_file"
+  status=0
+  DOCKER_AGENT_CURSOR_API_KEY_FILE="$key_file" \
+    FAKE_GROUP_EXISTS=1 FAKE_PASSWD_EXISTS=1 \
+    run_entrypoint "$fake_bin" "$log" cursor-agent >"$errors" 2>&1 || status=$?
+  ((status != 0)) || fail "an empty key file unexpectedly succeeded"
+  assert_contains "Cursor API key file is empty" "$errors"
+}
+
+test_cursor_key_is_not_exported_for_other_agents() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local fake_bin="$TEST_TMP/bin"
+  local log="$TEST_TMP/system.log"
+  local key_file="$TEST_TMP/cursor-api-key"
+  : >"$log"
+  make_fake_system_commands "$fake_bin"
+  printf '%s\n' 'key-from-file' >"$key_file"
+
+  DOCKER_AGENT_CURSOR_API_KEY_FILE="$key_file" \
+    FAKE_GROUP_EXISTS=1 FAKE_PASSWD_EXISTS=1 \
+    run_entrypoint "$fake_bin" "$log" custom-command
+
+  assert_no_line "<ENV_CURSOR_API_KEY:key-from-file>" "$log"
+}
+
 init_tests
 test_missing_uid_and_gid_are_created_without_touching_shared_mounts
 test_existing_gid_is_reused_and_existing_uid_skips_user_creation
@@ -684,4 +751,7 @@ test_claude_environment_policy_does_not_change_other_commands
 test_kimi_data_root_and_notes_are_prepared
 test_kimi_keeps_an_explicit_data_root_and_skips_missing_notes
 test_kimi_environment_policy_does_not_change_other_commands
+test_cursor_api_key_is_read_from_the_mounted_file
+test_cursor_missing_or_empty_key_fails_before_launching
+test_cursor_key_is_not_exported_for_other_agents
 printf 'entrypoint tests: PASS\n'
