@@ -10,13 +10,15 @@ die() {
 
 usage_agent() {
   cat <<'EOF'
-Usage: docker-agent {codex|claude} [options] [--] [agent args...]
+Usage: docker-agent {codex|claude|kimi} [options] [--] [agent args...]
 
-Run Codex or Claude Code in Docker against the current project directory.
+Run Codex, Claude Code, or Kimi Code in Docker against the current project
+directory.
 
 Commands:
   docker-agent codex       Run Codex
   docker-agent claude      Run Claude Code
+  docker-agent kimi        Run Kimi Code
 
 Use "docker-agent AGENT --help" for agent-specific options.
 EOF
@@ -91,13 +93,53 @@ Isolated worktrees and their branches are retained after the container exits.
 EOF
 }
 
+usage_kimi() {
+  cat <<'EOF'
+Usage: docker-kimi [options] [--] [kimi args...]
+       docker-agent kimi [options] [--] [kimi args...]
+
+Run Kimi Code in Docker against the current project directory.
+
+Options:
+  --build                 Build the image before launching
+  --image IMAGE           Image to use (default: docker-agent:local)
+  --isolated NAME         In Git, create branch codex/NAME in a retained worktree
+  --bind PATH[:ro]        Bind an absolute directory at the same container path
+                          (repeatable; append :ro for read-only)
+  --env NAME[=VALUE]      Set or inherit a container environment variable
+                          (repeatable; NAME without VALUE inherits from host)
+  --network NETWORK       Also connect to a Docker network (repeatable)
+  --disable-default-network
+                          Do not connect to the shared docker-agent network
+  --host-docker           Give the agent full control of the host Docker daemon
+  --pat TOKEN             Provide a git access token directly
+  --pat-path FILE         Mount a git access token file
+  --disable-clipboard     Do not forward host display sockets
+  --help, -h              Show this help
+
+The host Kimi Code data directory is shared with the container, so a login
+performed in either place is visible to the other.
+Kimi Code starts with --yolo unless the passed arguments already select a
+permission mode or non-interactive execution.
+Arguments after -- are passed to Kimi Code without reinterpretation.
+Isolated worktrees and their branches are retained after the container exits.
+EOF
+}
+
+# Agents are dispatched by name. Adding one means appending it here and
+# defining the matching usage_NAME, prepare_NAME_launch, configure_NAME_runtime,
+# and NAME_final_args functions.
+SUPPORTED_AGENTS="codex claude kimi"
+
+agent_is_supported() {
+  local candidate=$1 name
+  for name in $SUPPORTED_AGENTS; do
+    [[ $name == "$candidate" ]] && return 0
+  done
+  return 1
+}
+
 case $PROGRAM_NAME in
-  docker-codex)
-    AGENT=codex
-    ;;
-  docker-claude)
-    AGENT=claude
-    ;;
   docker-agent)
     case ${1:-} in
       -h|--help)
@@ -105,16 +147,18 @@ case $PROGRAM_NAME in
         exit 0
         ;;
     esac
-    (($# >= 1)) || die "expected agent: codex or claude"
+    (($# >= 1)) || die "expected agent: ${SUPPORTED_AGENTS// /, }"
     AGENT=$1
     shift
-    [[ $AGENT == codex || $AGENT == claude ]] ||
-      die "unsupported agent: $AGENT"
+    ;;
+  docker-*)
+    AGENT=${PROGRAM_NAME#docker-}
     ;;
   *)
     die "unsupported launcher name: $PROGRAM_NAME"
     ;;
 esac
+agent_is_supported "$AGENT" || die "unsupported agent: $AGENT"
 
 path_is_within() {
   local child=$1 parent=$2
@@ -736,6 +780,131 @@ prepare_claude_state() {
   ensure_state_identity "$CLAUDE_STATE_DIR" "$CLAUDE_CONNECTION"
 }
 
+# Optional per-agent hooks. An agent implements only the ones it needs:
+# resolve_NAME_launch runs before any worktree is created, prepare_NAME_state
+# runs once the final checkout and Git paths are known.
+run_agent_hook() {
+  local hook=$1
+  if [[ $(type -t "$hook") == function ]]; then
+    "$hook"
+  fi
+}
+
+resolve_claude_launch() {
+  if [[ -z $CLAUDE_CONNECTION ]]; then
+    if [[ ${DOCKER_AGENT_TEST_FORCE_TTY:-} != 1 ]] &&
+      { [[ ! -t 0 ]] || [[ ! -t 1 ]]; }; then
+      die "non-interactive Claude launch requires --official-subscription, --official-api, or --profile NAME"
+    fi
+    if ! menu_select "请选择 Claude Code 的连接方式：" \
+      "Anthropic 官方订阅 / OAuth" \
+      "Anthropic 官方 API key" \
+      "自定义 endpoint"; then
+      exit 130
+    fi
+    case $MENU_SELECTION in
+      0)
+        CLAUDE_CONNECTION=official-subscription
+        ;;
+      1)
+        CLAUDE_CONNECTION=official-api
+        CLAUDE_PROFILE_NAME=official-api
+        ;;
+      2)
+        choose_custom_profile_menu || exit 130
+        ;;
+    esac
+    if [[ -n $CLAUDE_PROFILE_NAME ]]; then
+      validate_claude_profile_name
+    fi
+  fi
+  resolve_claude_connection
+  resolve_claude_credential_source
+}
+
+prepare_claude_state_hook() {
+  prepare_claude_state
+}
+
+# Codex reads its own login and config from CODEX_HOME, which the host shares
+# with the container so a login on either side is visible to the other.
+configure_codex_runtime() {
+  local codex_home_source
+  codex_home_source=${CODEX_HOME:-$HOME/.codex}
+  [[ -d $codex_home_source ]] ||
+    die "Codex home does not exist: $codex_home_source"
+  codex_home_source=$(cd "$codex_home_source" && pwd -P)
+  reject_mount_comma "$codex_home_source"
+  DOCKER_ARGS+=(--env "CODEX_HOME=/codex-home")
+  DOCKER_ARGS+=(--mount "type=bind,source=$codex_home_source,target=/codex-home")
+}
+
+configure_claude_runtime() {
+  reject_mount_comma "$CLAUDE_STATE_DIR"
+  DOCKER_ARGS+=(--mount "type=bind,source=$CLAUDE_STATE_DIR,target=/claude-state")
+  DOCKER_ARGS+=(--env "CLAUDE_CONFIG_DIR=/claude-state")
+  if [[ -n $CLAUDE_CREDENTIAL_PATH ]]; then
+    append_file_mount \
+      "$CLAUDE_CREDENTIAL_PATH" /claude-state/.credentials.json
+  fi
+  if [[ -n $CLAUDE_PROFILE_PATH ]]; then
+    reject_mount_comma "$CLAUDE_PROFILE_PATH"
+    DOCKER_ARGS+=(--mount "type=bind,source=$CLAUDE_PROFILE_PATH,target=/run/docker-agent/claude-profile.env,readonly")
+    DOCKER_ARGS+=(--env "DOCKER_AGENT_CLAUDE_PROFILE_FILE=/run/docker-agent/claude-profile.env")
+  fi
+  DOCKER_ARGS+=(--env "DOCKER_AGENT_CLAUDE_CONNECTION=$CLAUDE_CONNECTION")
+}
+
+# Kimi Code keeps config, sessions, and OAuth credentials under a single data
+# root that KIMI_CODE_HOME relocates, so sharing that directory is enough to
+# share a login. The directory is created when missing because the host does
+# not need its own Kimi Code installation to run the container one.
+configure_kimi_runtime() {
+  local kimi_home_source
+  kimi_home_source=${KIMI_CODE_HOME:-$HOME/.kimi-code}
+  [[ $kimi_home_source == /* ]] ||
+    die "Kimi Code home must be an absolute path: $kimi_home_source"
+  if [[ -e $kimi_home_source && ! -d $kimi_home_source ]]; then
+    die "Kimi Code home is not a directory: $kimi_home_source"
+  fi
+  install -d -m 700 "$kimi_home_source"
+  kimi_home_source=$(cd "$kimi_home_source" && pwd -P)
+  reject_mount_comma "$kimi_home_source"
+  DOCKER_ARGS+=(--env "KIMI_CODE_HOME=/kimi-home")
+  DOCKER_ARGS+=(--mount "type=bind,source=$kimi_home_source,target=/kimi-home")
+}
+
+codex_final_args() {
+  FINAL_ARGS=(codex --yolo --disable apps "${AGENT_ARGS[@]}")
+}
+
+claude_final_args() {
+  FINAL_ARGS=(claude "${AGENT_ARGS[@]}")
+}
+
+# Kimi Code rejects --yolo together with --prompt, --auto, or --plan, and its
+# non-interactive mode already runs unattended, so the default is only added
+# when the caller did not pick a mode itself.
+kimi_selects_own_mode() {
+  local arg
+  for arg in "${AGENT_ARGS[@]}"; do
+    case $arg in
+      -p|--prompt|--prompt=*|-y|--yolo|--yes|--auto-approve|--auto|--plan)
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
+kimi_final_args() {
+  if kimi_selects_own_mode; then
+    FINAL_ARGS=(kimi "${AGENT_ARGS[@]}")
+  else
+    FINAL_ARGS=(kimi --yolo "${AGENT_ARGS[@]}")
+  fi
+}
+
 DOCKER_BIN=${DOCKER_AGENT_DOCKER_BIN:-${DOCKER_CODEX_DOCKER_BIN:-docker}}
 IMAGE=${DOCKER_AGENT_IMAGE:-${DOCKER_CODEX_IMAGE:-docker-agent:local}}
 HOST_OS=${DOCKER_AGENT_HOST_OS:-${DOCKER_CODEX_HOST_OS:-$(uname -s)}}
@@ -855,11 +1024,7 @@ while (($#)); do
       break
       ;;
     --help|-h)
-      if [[ $AGENT == codex ]]; then
-        usage_codex
-      else
-        usage_claude
-      fi
+      "usage_$AGENT"
       exit 0
       ;;
     *)
@@ -868,10 +1033,8 @@ while (($#)); do
   esac
 done
 
-if [[ $AGENT == claude ]]; then
-  if [[ -n $CLAUDE_PROFILE_NAME ]]; then
-    validate_claude_profile_name
-  fi
+if [[ -n $CLAUDE_PROFILE_NAME ]]; then
+  validate_claude_profile_name
 fi
 
 command -v git >/dev/null 2>&1 || die "git is required"
@@ -914,37 +1077,7 @@ if [[ -n $ISOLATED ]] && ((HAS_GIT == 0)); then
   die "--isolated requires a Git checkout"
 fi
 
-if [[ $AGENT == claude ]]; then
-  if [[ -z $CLAUDE_CONNECTION ]]; then
-    if [[ ${DOCKER_AGENT_TEST_FORCE_TTY:-} != 1 ]] &&
-      { [[ ! -t 0 ]] || [[ ! -t 1 ]]; }; then
-      die "non-interactive Claude launch requires --official-subscription, --official-api, or --profile NAME"
-    fi
-    if ! menu_select "请选择 Claude Code 的连接方式：" \
-      "Anthropic 官方订阅 / OAuth" \
-      "Anthropic 官方 API key" \
-      "自定义 endpoint"; then
-      exit 130
-    fi
-    case $MENU_SELECTION in
-      0)
-        CLAUDE_CONNECTION=official-subscription
-        ;;
-      1)
-        CLAUDE_CONNECTION=official-api
-        CLAUDE_PROFILE_NAME=official-api
-        ;;
-      2)
-        choose_custom_profile_menu || exit 130
-        ;;
-    esac
-    if [[ -n $CLAUDE_PROFILE_NAME ]]; then
-      validate_claude_profile_name
-    fi
-  fi
-  resolve_claude_connection
-  resolve_claude_credential_source
-fi
+run_agent_hook "resolve_${AGENT}_launch"
 
 if ((HAS_GIT)); then
   COMMON_DIR=$(git rev-parse --path-format=absolute --git-common-dir)
@@ -963,9 +1096,7 @@ if [[ -n $ISOLATED ]]; then
   GIT_DIR=$(git -C "$CHECKOUT_ROOT" rev-parse --path-format=absolute --git-dir)
   GIT_DIR=$(cd "$GIT_DIR" && pwd -P)
 fi
-if [[ $AGENT == claude ]]; then
-  prepare_claude_state
-fi
+run_agent_hook "prepare_${AGENT}_state_hook"
 REPO_ID=$(repo_id_for "$COMMON_DIR")
 
 DOCKER_ARGS=(run --rm)
@@ -1001,29 +1132,7 @@ if ((${#ENV_OVERRIDE_KEYS[@]})); then
   DOCKER_ARGS+=(--env "DOCKER_AGENT_ENV_OVERRIDE_KEYS=$env_override_key_list")
 fi
 append_same_path_mount "$CHECKOUT_ROOT"
-if [[ $AGENT == codex ]]; then
-  CODEX_HOME_SOURCE=${CODEX_HOME:-$HOME/.codex}
-  [[ -d $CODEX_HOME_SOURCE ]] ||
-    die "Codex home does not exist: $CODEX_HOME_SOURCE"
-  CODEX_HOME_SOURCE=$(cd "$CODEX_HOME_SOURCE" && pwd -P)
-  reject_mount_comma "$CODEX_HOME_SOURCE"
-  DOCKER_ARGS+=(--env "CODEX_HOME=/codex-home")
-  DOCKER_ARGS+=(--mount "type=bind,source=$CODEX_HOME_SOURCE,target=/codex-home")
-else
-  reject_mount_comma "$CLAUDE_STATE_DIR"
-  DOCKER_ARGS+=(--mount "type=bind,source=$CLAUDE_STATE_DIR,target=/claude-state")
-  DOCKER_ARGS+=(--env "CLAUDE_CONFIG_DIR=/claude-state")
-  if [[ -n $CLAUDE_CREDENTIAL_PATH ]]; then
-    append_file_mount \
-      "$CLAUDE_CREDENTIAL_PATH" /claude-state/.credentials.json
-  fi
-  if [[ -n $CLAUDE_PROFILE_PATH ]]; then
-    reject_mount_comma "$CLAUDE_PROFILE_PATH"
-    DOCKER_ARGS+=(--mount "type=bind,source=$CLAUDE_PROFILE_PATH,target=/run/docker-agent/claude-profile.env,readonly")
-    DOCKER_ARGS+=(--env "DOCKER_AGENT_CLAUDE_PROFILE_FILE=/run/docker-agent/claude-profile.env")
-  fi
-  DOCKER_ARGS+=(--env "DOCKER_AGENT_CLAUDE_CONNECTION=$CLAUDE_CONNECTION")
-fi
+"configure_${AGENT}_runtime"
 DOCKER_ARGS+=(--mount "type=volume,source=docker-codex-cache-$REPO_ID,target=/codex-cache")
 
 if [[ -n $PAT_VALUE ]]; then
@@ -1159,13 +1268,7 @@ else
     die "image not found: $IMAGE (run with --build)"
 fi
 
-case $AGENT in
-  codex)
-    FINAL_ARGS=(codex --yolo --disable apps "${AGENT_ARGS[@]}")
-    ;;
-  claude)
-    FINAL_ARGS=(claude "${AGENT_ARGS[@]}")
-    ;;
-esac
+FINAL_ARGS=()
+"${AGENT}_final_args"
 
 exec "$DOCKER_BIN" "${DOCKER_ARGS[@]}" "$IMAGE" "${FINAL_ARGS[@]}"

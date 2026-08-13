@@ -257,6 +257,19 @@ elif [[ ${1:-} == claude ]]; then
   else
     set -- claude --dangerously-skip-permissions "${@:2}"
   fi
+elif [[ ${1:-} == kimi ]]; then
+  export KIMI_CODE_HOME=${KIMI_CODE_HOME:-/kimi-home}
+  # Kimi Code has no flag that appends to the system prompt. It does merge
+  # instructions from ~/.agents/AGENTS.md, resolved through os.homedir() and
+  # therefore through the HOME exported above. That file lives in the
+  # container-private home, so the notes never reach the shared data root
+  # mounted at KIMI_CODE_HOME, and a user's own AGENTS.md there still applies.
+  agent_notes=${DOCKER_AGENT_AGENT_NOTES:-/usr/local/share/docker-agent/agent-notes.md}
+  if [[ -r $agent_notes && ! -e $HOME/.agents/AGENTS.md ]]; then
+    mkdir -p "$HOME/.agents"
+    cp "$agent_notes" "$HOME/.agents/AGENTS.md"
+    chown "$HOST_UID:$HOST_GID" "$HOME/.agents" "$HOME/.agents/AGENTS.md"
+  fi
 fi
 
 # An explicit gosu UID:GID drops supplementary groups, including the group

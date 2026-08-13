@@ -2,23 +2,25 @@
 
 [简体中文](README.md) | **English**
 
-Run Codex CLI or Claude Code in one Docker image. The container mounts the
-current project directory, so agent edits land directly on host files. For a
-Git checkout, the unified launcher also manages Git metadata, build caches,
-optional worktrees, and clipboard forwarding. The original `docker-codex`
-command remains compatible.
+Run Codex CLI, Claude Code, or Kimi Code in one Docker image. The container
+mounts the current project directory, so agent edits land directly on host
+files. For a Git checkout, the unified launcher also manages Git metadata,
+build caches, optional worktrees, and clipboard forwarding. The original
+`docker-codex` command remains compatible.
 
 ## Quick start
 
 Prerequisites are Git, Bash 3.2+, and a running Docker daemon. Codex requires
 `${CODEX_HOME:-$HOME/.codex}` on the host. Reusing a Claude subscription
-requires a completed Claude Code login on a Linux or WSL host.
+requires a completed Claude Code login on a Linux or WSL host. Kimi Code needs
+no host setup: its data directory is created when missing, and you can log in
+from inside the container.
 
 ```bash
 # Build the shared image once, from this source checkout
 docker build -t docker-agent:local .
 
-# Install docker-agent, docker-codex, and docker-claude
+# Install docker-agent and one launcher per supported agent
 sudo ./install.sh
 
 # Interactively create a custom-endpoint profile
@@ -29,11 +31,13 @@ cd /path/to/your-project
 docker-agent codex
 docker-agent claude
 docker-agent claude --profile deepseek
+docker-agent kimi
 ```
 
-`docker-codex` is equivalent to `docker-agent codex`, and `docker-claude` is
-equivalent to `docker-agent claude`. Without `sudo`, run
-`./install.sh --prefix "$HOME/.local"` to install under `$HOME/.local/bin`.
+`docker-codex` is equivalent to `docker-agent codex`, `docker-claude` to
+`docker-agent claude`, and `docker-kimi` to `docker-agent kimi`. Without
+`sudo`, run `./install.sh --prefix "$HOME/.local"` to install under
+`$HOME/.local/bin`.
 
 The launcher creates and joins a shared `docker-agent` bridge network by
 default. To make a development service such as PostgreSQL available to an
@@ -48,7 +52,7 @@ profile menu shows `ANTHROPIC_MODEL` after each name and warns when the primary
 model is not configured.
 
 > [!WARNING]
-> Codex runs with `--yolo`; Claude Code runs with
+> Codex and Kimi Code run with `--yolo`; Claude Code runs with
 > `--dangerously-skip-permissions`. The selected agent receives the current
 > project directory, required Git metadata, and explicitly selected credentials. Use
 > this only with projects you trust.
@@ -71,6 +75,8 @@ docker-agent codex --pat-path ~/.local/share/docker-agent/pat/github-x
 docker run -d --name project-pg --network docker-agent -e POSTGRES_PASSWORD=change-me postgres:17
 docker-agent codex --network another-development-network
 docker-agent claude --host-docker --profile deepseek
+docker-agent kimi -- --model kimi-k3
+docker-agent kimi --isolated issue-123
 ```
 
 ## Command-line options
@@ -120,7 +126,7 @@ Shared options:
     Print help.
 ```
 
-Arguments after `--` are passed unchanged to Codex or Claude Code.
+Arguments after `--` are passed unchanged to the selected agent.
 
 Claude connection and profile options:
 
@@ -142,9 +148,14 @@ Claude connection and profile options:
 See [Claude Code integration](docs/en/claude.md) for profile creation, OAuth
 mounting, state isolation, UTC/locale policy, and security details.
 
+Kimi Code has no matching selectors. It shares the host data root, which holds
+its login, providers, and sessions; see
+[Kimi Code integration](docs/en/kimi.md).
+
 ## Docs
 
 - [Claude Code integration](docs/en/claude.md): menus, profiles, OAuth, state, cleanup.
+- [Kimi Code integration](docs/en/kimi.md): shared data root, login, default permission, notes.
 - [Checkout and worktrees](docs/en/worktree.md): mount rules, `--isolated`, `--bind`.
 - [Authentication and credentials](docs/en/credentials.md): Codex home, Claude credentials, Git push.
 - [Image environment and build caches](docs/en/environment.md): toolchain, locale, cache volumes.

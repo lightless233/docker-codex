@@ -16,6 +16,14 @@ file_gid() {
   fi
 }
 
+file_mode() {
+  if stat -c %a "$1" >/dev/null 2>&1; then
+    stat -c %a "$1"
+  else
+    stat -f %Lp "$1"
+  fi
+}
+
 assert_line() {
   local expected=$1 file=$2
   grep -Fqx -- "$expected" "$file" ||
@@ -147,6 +155,9 @@ prepare_fake_runtime() {
   TEST_AGENT_CONFIG_HOME="$base/agent config"
   TEST_AGENT_DATA_HOME="$base/agent data"
   TEST_CLAUDE_HOME="$base/host claude"
+  # Left uncreated on purpose: the launcher is expected to create the Kimi
+  # Code data directory when the host does not have one yet.
+  TEST_KIMI_HOME="$base/host kimi"
   TEST_DOCKER="$base/docker"
   TEST_DOCKER_LOG="$base/docker.log"
   mkdir -p "$TEST_CODEX_HOME"
@@ -165,6 +176,7 @@ run_named_launcher() {
   local agent_config_home=${DOCKER_AGENT_CONFIG_HOME:-$TEST_AGENT_CONFIG_HOME}
   local agent_data_home
   local host_claude_home=${CLAUDE_CONFIG_DIR:-$TEST_CLAUDE_HOME}
+  local host_kimi_home=${KIMI_CODE_HOME:-$TEST_KIMI_HOME}
   if [[ -n ${DOCKER_AGENT_DATA_HOME+x} ]]; then
     agent_data_home=$DOCKER_AGENT_DATA_HOME
   elif [[ -n ${DOCKER_CODEX_DATA_HOME+x} ]]; then
@@ -179,6 +191,7 @@ run_named_launcher() {
       DOCKER_AGENT_CONFIG_HOME="$agent_config_home" \
       DOCKER_AGENT_DATA_HOME="$agent_data_home" \
       CLAUDE_CONFIG_DIR="$host_claude_home" \
+      KIMI_CODE_HOME="$host_kimi_home" \
       DOCKER_AGENT_DOCKER_BIN="$TEST_DOCKER" \
       DOCKER_AGENT_TEST_DOCKER_LOG="$TEST_DOCKER_LOG" \
       "$project_root/$launcher_name" "$@"

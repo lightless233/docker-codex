@@ -6,7 +6,7 @@
 
 ## 共享 Docker 网络
 
-Codex 和 Claude 容器默认加入持久化的 `docker-agent` bridge
+所有 agent 容器默认加入持久化的 `docker-agent` bridge
 网络。启动器会在该网络不存在时自动创建，不会在 agent 退出时
 删除。其他开发服务可以加入同一网络：
 

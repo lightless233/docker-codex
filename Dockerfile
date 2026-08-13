@@ -3,6 +3,7 @@ FROM debian:13-slim
 ARG NODE_VERSION=24.19.0
 ARG CODEX_VERSION=0.147.0
 ARG CLAUDE_CODE_VERSION=2.1.229
+ARG KIMI_CODE_VERSION=0.36.0
 ARG PNPM_VERSION=11.21.0
 ARG TARGETARCH
 
@@ -99,9 +100,11 @@ RUN curl --proto '=https' --tlsv1.2 --silent --show-error --fail \
 RUN npm install --global \
         "@openai/codex@${CODEX_VERSION}" \
         "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+        "@moonshot-ai/kimi-code@${KIMI_CODE_VERSION}" \
         "pnpm@${PNPM_VERSION}" \
     && codex --version \
     && claude --version \
+    && kimi --version \
     && pnpm --version
 
 # Keep Docker client tooling in its own late layer. Changing these packages

@@ -2,22 +2,23 @@
 
 **简体中文** | [English](README.en.md)
 
-在同一个 Docker 镜像里运行 Codex CLI 或 Claude Code。容器挂载当前项目
-目录，agent 的修改直接落在宿主文件上；如果项目是 Git checkout，启动器
-还会管理 Git metadata、构建缓存、可选 worktree 和剪贴板转发。原有
+在同一个 Docker 镜像里运行 Codex CLI、Claude Code 或 Kimi Code。容器挂载
+当前项目目录，agent 的修改直接落在宿主文件上；如果项目是 Git checkout，
+启动器还会管理 Git metadata、构建缓存、可选 worktree 和剪贴板转发。原有
 `docker-codex` 命令继续兼容。
 
 ## 快速开始
 
 前置条件：Git、Bash 3.2+、已经启动的 Docker daemon。使用 Codex 时宿主机
 需要 `${CODEX_HOME:-$HOME/.codex}`；复用 Claude 官方订阅时，需要先在
-Linux/WSL 宿主机上完成 Claude Code 登录。
+Linux/WSL 宿主机上完成 Claude Code 登录。Kimi Code 的数据目录缺失时会
+自动创建，可以直接在容器内登录。
 
 ```bash
 # 在源码目录构建一次共享镜像
 docker build -t docker-agent:local .
 
-# 安装 docker-agent、docker-codex 和 docker-claude
+# 安装 docker-agent 以及每个 agent 对应的启动器
 sudo ./install.sh
 
 # 交互创建自定义 endpoint profile
@@ -28,11 +29,13 @@ cd /path/to/your-project
 docker-agent codex
 docker-agent claude
 docker-agent claude --profile deepseek
+docker-agent kimi
 ```
 
 `docker-codex` 等价于 `docker-agent codex`，`docker-claude` 等价于
-`docker-agent claude`。没有 `sudo` 时，运行
-`./install.sh --prefix "$HOME/.local"` 安装到 `$HOME/.local/bin`。
+`docker-agent claude`，`docker-kimi` 等价于 `docker-agent kimi`。没有
+`sudo` 时，运行 `./install.sh --prefix "$HOME/.local"` 安装到
+`$HOME/.local/bin`。
 
 启动器默认创建并加入共享的 `docker-agent` bridge 网络。需要让
 PostgreSQL 等开发服务被 agent 访问时，启动该容器时同样指定
@@ -44,7 +47,7 @@ key、自定义 endpoint；选择自定义 endpoint 后再显示按名称排序�
 警告。脚本或 CI 没有 TTY，必须显式使用三个连接参数之一。
 
 > [!WARNING]
-> Codex 默认使用 `--yolo`，Claude Code 默认使用
+> Codex 与 Kimi Code 默认使用 `--yolo`，Claude Code 默认使用
 > `--dangerously-skip-permissions`。当前项目目录、必要的 Git metadata 和
 > 显式凭证会按用途挂载给所选 agent；请只在信任的项目中使用。
 > `--host-docker` 还会让 agent 获得宿主 Docker 的 root 级控制权，包括
@@ -65,6 +68,8 @@ docker-agent codex --pat-path ~/.local/share/docker-agent/pat/github-x
 docker run -d --name project-pg --network docker-agent -e POSTGRES_PASSWORD=change-me postgres:17
 docker-agent codex --network another-development-network
 docker-agent claude --host-docker --profile deepseek
+docker-agent kimi -- --model kimi-k3
+docker-agent kimi --isolated issue-123
 ```
 
 ## 命令行选项
@@ -111,7 +116,7 @@ docker-agent claude --host-docker --profile deepseek
     输出帮助。
 ```
 
-`--` 后的参数不再由启动器解释，原样传给 Codex 或 Claude Code。
+`--` 后的参数不再由启动器解释，原样传给所选 agent。
 
 Claude 连接与 profile 选项：
 
@@ -132,9 +137,13 @@ Claude 连接与 profile 选项：
 profile 创建、OAuth 挂载、状态隔离、UTC/locale 和安全边界详见
 [Claude Code 集成](docs/zh/claude.md)。
 
+Kimi Code 没有对应的连接选择器：它共享宿主的数据根，登录、provider 和
+会话都保存在其中，详见 [Kimi Code 集成](docs/zh/kimi.md)。
+
 ## 文档
 
 - [Claude Code 集成](docs/zh/claude.md)：连接菜单、profile、OAuth、状态与清理。
+- [Kimi Code 集成](docs/zh/kimi.md)：数据根共享、登录、默认权限与指令注入。
 - [Checkout 与 worktree](docs/zh/worktree.md)：挂载规则、`--isolated`、`--bind`。
 - [认证与凭证](docs/zh/credentials.md)：Codex home、Claude 凭证、Git push。
 - [镜像环境与构建缓存](docs/zh/environment.md)：工具链、locale、缓存 volume。

@@ -1,7 +1,8 @@
 # Agent configuration, authentication, and Git push credentials
 
 This page explains the authentication boundaries for Codex and Claude Code,
-and how to explicitly provide Git push credentials.
+and how to explicitly provide Git push credentials. Kimi Code shares its whole
+data root instead; see [Kimi Code integration](kimi.md).
 
 ## Codex configuration, memory, and authentication
 

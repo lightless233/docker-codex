@@ -18,7 +18,7 @@ test_installer_copies_all_launchers_from_any_working_directory() {
     "$ROOT/install.sh" --prefix "$prefix"
   )
 
-  for name in docker-agent docker-codex docker-claude; do
+  for name in docker-agent docker-codex docker-claude docker-kimi; do
     installed="$prefix/bin/$name"
     [[ -f $installed && ! -L $installed ]] ||
       fail "$name was not installed as a regular file"
@@ -40,6 +40,8 @@ test_installer_copies_all_launchers_from_any_working_directory() {
     <("$prefix/bin/docker-codex" --help)
   assert_contains "Usage: docker-claude" \
     <("$prefix/bin/docker-claude" --help)
+  assert_contains "Usage: docker-kimi" \
+    <("$prefix/bin/docker-kimi" --help)
 }
 
 test_installer_rejects_invalid_arguments_without_installing() {

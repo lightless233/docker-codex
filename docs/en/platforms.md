@@ -6,7 +6,7 @@ documented separately in [clipboard.md](clipboard.md).
 
 ## Shared Docker network
 
-Codex and Claude containers join a persistent `docker-agent` bridge network by
+Every agent container joins a persistent `docker-agent` bridge network by
 default. The launcher creates it when missing and does not remove it when the
 agent exits. Other development services can join the same network:
 

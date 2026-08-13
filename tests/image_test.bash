@@ -120,6 +120,7 @@ test_claude_code_and_locale_are_installed() {
     set -euo pipefail
     codex --version | grep -Fx "codex-cli 0.147.0" >/dev/null
     claude --version | grep -F "2.1.229" >/dev/null
+    kimi --version | grep -Fx "0.36.0" >/dev/null
     locale -a | grep -Fxi "en_US.utf8" >/dev/null
     LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 locale charmap |
       grep -Fx "UTF-8" >/dev/null
@@ -402,6 +403,45 @@ test_mold_is_default_linker_and_sccache_is_available() {
     '
 }
 
+test_kimi_notes_reach_the_path_kimi_reads() {
+  # Kimi Code has no flag that appends to the system prompt; it merges the
+  # generic cross-tool instruction file resolved through os.homedir(). The
+  # probe asserts the notes land exactly where that resolves for the runtime
+  # user, and that the shared data root is left alone.
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local probe_dir="$TEST_TMP/probe"
+  install -d -m 755 "$probe_dir"
+  # shellcheck disable=SC2016 # Variables expand when the generated probe runs.
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    '[[ $(id -u) == 12345 ]]' \
+    '[[ $(id -g) == 23456 ]]' \
+    '[[ $KIMI_CODE_HOME == /tmp/kimi-home ]]' \
+    'resolved=$(node -e "
+       const os = require(\"os\");
+       const path = require(\"path\");
+       process.stdout.write(path.join(os.homedir(), \".agents\", \"AGENTS.md\"));
+     ")' \
+    '[[ $resolved == "$HOME/.agents/AGENTS.md" ]]' \
+    '[[ -r $resolved ]]' \
+    'cmp -s /usr/local/share/docker-agent/agent-notes.md "$resolved"' \
+    '[[ $(stat -c %u "$resolved") == 12345 ]]' \
+    '[[ ! -e /tmp/kimi-home/AGENTS.md ]]' \
+    '[[ ${1:-} == --yolo ]]' \
+    >"$probe_dir/kimi"
+  chmod 0755 "$probe_dir/kimi"
+
+  "$DOCKER_BIN" run --rm \
+    --env HOST_UID=12345 \
+    --env HOST_GID=23456 \
+    --env KIMI_CODE_HOME=/tmp/kimi-home \
+    --env PATH=/probe:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    --mount "type=bind,source=$probe_dir,target=/probe,readonly" \
+    "$IMAGE" kimi --yolo
+}
+
 test_codex_still_sends_the_clipboard_script_the_shim_emulates() {
   # The shim is coupled to Codex internals, so a Codex upgrade can silently
   # break clipboard paste. Read the script out of the pinned build instead of
@@ -483,6 +523,7 @@ test_claude_runtime_is_non_root_utc_and_en_us
 test_python_and_archive_tools_are_available
 test_agent_notes_are_readable_by_runtime_user
 test_mold_is_default_linker_and_sccache_is_available
+test_kimi_notes_reach_the_path_kimi_reads
 test_codex_still_sends_the_clipboard_script_the_shim_emulates
 test_powershell_shim_reads_wayland_clipboard_image
 printf 'image tests: PASS\n'

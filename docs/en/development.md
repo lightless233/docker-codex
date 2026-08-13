@@ -13,6 +13,7 @@ docker build \
   --build-arg NODE_VERSION=24.19.0 \
   --build-arg CODEX_VERSION=0.147.0 \
   --build-arg CLAUDE_CODE_VERSION=2.1.229 \
+  --build-arg KIMI_CODE_VERSION=0.36.0 \
   --build-arg PNPM_VERSION=11.21.0 \
   -t docker-agent:local .
 ```
@@ -34,8 +35,9 @@ DOCKER_AGENT_TEST_IMAGE=docker-agent:local tests/image_test.bash
 The test suite uses real temporary Git repositories, linked worktrees, and
 submodules while replacing only the external Docker boundary. The separate
 image test runs a real container and verifies Debian, Node provenance,
-Codex/Claude versions, numeric UID/GID, Claude UTC/locale/telemetry policy,
-absence of the root group, and passwordless sudo. Linux image builds and
+Codex/Claude/Kimi versions, numeric UID/GID, Claude UTC/locale/telemetry
+policy, where the Kimi instruction file lands, absence of the root group, and
+passwordless sudo. Linux image builds and
 runtime smoke tests are part of release verification.
 
 macOS path/argument branches and the multi-architecture image definition are

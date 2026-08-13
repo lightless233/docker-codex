@@ -12,6 +12,7 @@ docker build \
   --build-arg NODE_VERSION=24.19.0 \
   --build-arg CODEX_VERSION=0.147.0 \
   --build-arg CLAUDE_CODE_VERSION=2.1.229 \
+  --build-arg KIMI_CODE_VERSION=0.36.0 \
   --build-arg PNPM_VERSION=11.21.0 \
   -t docker-agent:local .
 ```
@@ -32,8 +33,8 @@ DOCKER_AGENT_TEST_IMAGE=docker-agent:local tests/image_test.bash
 
 shell 测试会使用真实的临时 Git 仓库、linked worktree 和 submodule，只在
 Docker 外部边界使用 fake command。独立的镜像测试会运行真实容器，验证
-Debian、Node 安装来源、Codex/Claude 版本、数值 UID/GID、Claude 的
-UTC/locale/遥测策略、未加入 root 组以及免密 sudo。
+Debian、Node 安装来源、Codex/Claude/Kimi 版本、数值 UID/GID、Claude 的
+UTC/locale/遥测策略、Kimi 指令文件的落点、未加入 root 组以及免密 sudo。
 
 Linux 镜像构建和运行时 smoke test 已纳入发布验证。macOS 参数分支和多架构
 镜像定义有自动化覆盖，但本项目尚未在真实 macOS Docker Desktop/Apple

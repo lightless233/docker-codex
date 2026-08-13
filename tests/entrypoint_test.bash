@@ -66,7 +66,7 @@ case $name in
     fi
     exit 2
     ;;
-  groupadd|useradd|usermod|mkdir|chown)
+  groupadd|useradd|usermod|mkdir|chown|cp)
     exit 0
     ;;
   gosu)
@@ -84,6 +84,11 @@ case $name in
     record_claude_environment
     exit "${FAKE_FINAL_STATUS:-0}"
     ;;
+  kimi)
+    printf '<ENV_KIMI_CODE_HOME:%s>\n' "${KIMI_CODE_HOME:-}" >>"$log"
+    printf '<ENV_HOME:%s>\n' "${HOME:-}" >>"$log"
+    exit "${FAKE_FINAL_STATUS:-0}"
+    ;;
   codex|custom-command)
     printf '<ENV_USER:%s>\n' "${USER:-}" >>"$log"
     printf '<ENV_CARGO_HOME:%s>\n' "${CARGO_HOME:-}" >>"$log"
@@ -98,7 +103,7 @@ esac
 exit 2
 EOF
   chmod +x "$fake_bin/fake-command"
-  for command in getent groupadd useradd usermod mkdir chown gosu setpriv codex claude custom-command; do
+  for command in getent groupadd useradd usermod mkdir chown cp gosu setpriv codex claude kimi custom-command; do
     ln -s fake-command "$fake_bin/$command"
   done
 }
@@ -599,6 +604,69 @@ test_claude_environment_policy_does_not_change_other_commands() {
   assert_line "<ENV_ATTRIBUTION_HEADER:host-attribution>" "$log"
 }
 
+test_kimi_data_root_and_notes_are_prepared() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local fake_bin="$TEST_TMP/bin"
+  local log="$TEST_TMP/system.log"
+  local notes="$TEST_TMP/agent-notes.md"
+  : >"$log"
+  make_fake_system_commands "$fake_bin"
+  printf '%s\n' 'container notes' >"$notes"
+
+  DOCKER_AGENT_AGENT_NOTES="$notes" \
+    FAKE_GROUP_EXISTS=1 FAKE_PASSWD_EXISTS=1 \
+    run_entrypoint "$fake_bin" "$log" kimi --yolo
+
+  assert_line "<ENV_KIMI_CODE_HOME:/kimi-home>" "$log"
+  assert_line "<ENV_HOME:/home/codex>" "$log"
+  # Kimi Code has no flag to append instructions, so the notes are placed at
+  # the generic cross-tool path that os.homedir() resolves to.
+  assert_contiguous_lines "$log" "<CALL:mkdir>" "<-p>" "</home/codex/.agents>"
+  assert_contiguous_lines "$log" \
+    "<CALL:cp>" "<$notes>" "</home/codex/.agents/AGENTS.md>"
+  assert_contiguous_lines "$log" \
+    "<CALL:chown>" "<12345:23456>" "</home/codex/.agents>" \
+    "</home/codex/.agents/AGENTS.md>"
+  # The notes must not be written into the shared host data root.
+  assert_no_line "</kimi-home/AGENTS.md>" "$log"
+  assert_line "<--yolo>" "$log"
+}
+
+test_kimi_keeps_an_explicit_data_root_and_skips_missing_notes() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local fake_bin="$TEST_TMP/bin"
+  local log="$TEST_TMP/system.log"
+  : >"$log"
+  make_fake_system_commands "$fake_bin"
+
+  KIMI_CODE_HOME=/custom-kimi \
+    DOCKER_AGENT_AGENT_NOTES="$TEST_TMP/absent.md" \
+    FAKE_GROUP_EXISTS=1 FAKE_PASSWD_EXISTS=1 \
+    run_entrypoint "$fake_bin" "$log" kimi
+
+  assert_line "<ENV_KIMI_CODE_HOME:/custom-kimi>" "$log"
+  assert_no_line "<CALL:cp>" "$log"
+}
+
+test_kimi_environment_policy_does_not_change_other_commands() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local fake_bin="$TEST_TMP/bin"
+  local log="$TEST_TMP/system.log"
+  local notes="$TEST_TMP/agent-notes.md"
+  : >"$log"
+  make_fake_system_commands "$fake_bin"
+  printf '%s\n' 'container notes' >"$notes"
+
+  DOCKER_AGENT_AGENT_NOTES="$notes" \
+    FAKE_GROUP_EXISTS=1 FAKE_PASSWD_EXISTS=1 \
+    run_entrypoint "$fake_bin" "$log" custom-command
+
+  assert_no_line "<CALL:cp>" "$log"
+}
+
 init_tests
 test_missing_uid_and_gid_are_created_without_touching_shared_mounts
 test_existing_gid_is_reused_and_existing_uid_skips_user_creation
@@ -613,4 +681,7 @@ test_claude_profile_parser_accepts_arbitrary_literal_values
 test_claude_profile_connection_contract_and_file_metadata_are_enforced
 test_claude_missing_notes_and_exit_status_are_preserved
 test_claude_environment_policy_does_not_change_other_commands
+test_kimi_data_root_and_notes_are_prepared
+test_kimi_keeps_an_explicit_data_root_and_skips_missing_notes
+test_kimi_environment_policy_does_not_change_other_commands
 printf 'entrypoint tests: PASS\n'
