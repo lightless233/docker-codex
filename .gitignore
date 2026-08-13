@@ -1,0 +1,16 @@
+# Credentials. The docs walk users through creating these, and they are meant
+# to live under the config home rather than here, so a stray copy inside the
+# checkout must never be committed.
+api-key
+*.env
+.credentials.json
+*.pem
+*.key
+id_rsa
+id_rsa.pub
+
+# Editor and OS noise. macOS is a supported host.
+.DS_Store
+*.swp
+*.swo
+*~
