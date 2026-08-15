@@ -9,10 +9,12 @@ toolchain, or when investigating cache usage.
 
 The image uses Debian 13 slim and installs Node.js 24.19.0 LTS from the
 official nodejs.org linux-x64/linux-arm64 archive after checking it against
-the release's `SHASUMS256.txt`. It also contains pnpm, Rust stable (with
-rustfmt and clippy), Codex CLI, Git, Python 3 (pip and venv), common native
-build dependencies, Claude Code, Kimi Code, Cursor Agent (self-contained under
-`/opt/cursor-agent`), Docker CLI, Buildx, Compose, and shell
+the release's `SHASUMS256.txt`. Go 1.26.6 is installed from the official
+linux-amd64/linux-arm64 archive with a pinned SHA-256 checksum. The image also
+contains pnpm, Rust stable (with rustfmt and clippy), Codex CLI, Git, Python 3
+(pip and venv), common native build dependencies, Claude Code, Kimi Code,
+Cursor Agent (self-contained under `/opt/cursor-agent`), Docker CLI, Buildx,
+Compose, and shell
 utilities useful during agentic development. It ships Docker clients only,
 not `dockerd`; they can reach the host daemon only when `--host-docker`
 explicitly mounts its Unix socket.
@@ -27,7 +29,8 @@ terminals such as kitty and ghostty still rely on that fallback. An explicit
 `--env TERM=...` overrides the forwarded value.
 
 The image generates the `en_US.UTF-8`
-locale. An `/etc/profile.d` entry keeps Cargo and pnpm on PATH for login shells.
+locale. An `/etc/profile.d` entry keeps Cargo, Go, and pnpm on PATH for login
+shells.
 The image links Rust builds with mold by default via `RUSTFLAGS` (a project's
 own rustflags or `docker run -e RUSTFLAGS=...` override it), and ships
 sccache for opt-in reuse of dependency builds across worktrees:
@@ -41,8 +44,8 @@ RUSTC_WRAPPER=sccache SCCACHE_DIR=/codex-cache/sccache cargo build
 The image ships `/usr/local/share/docker-agent/agent-notes.md`, which
 records key environment facts: whether push credentials are configured, the
 default mold linker, opt-in sccache usage, the `CARGO_TARGET_DIR` location,
-and so on. It contains no response-language, personality, endpoint, or model
-instruction.
+and the persistent Go cache paths. It contains no response-language,
+personality, endpoint, or model instruction.
 
 Each agent has a different injection channel. Codex uses
 `-c developer_instructions=...` (which appends; `model_instructions_file`
@@ -74,13 +77,13 @@ docker-codex-cache-<git-path-hash>
 
 A plain directory hashes the synthetic absolute path
 `<current-directory>/.git`, so running `git init` there later does not change
-the volume name. The volume backs `/codex-cache`. Cargo registry/git download caches, pnpm
-files, and general XDG caches stay inside Docker's Linux filesystem and are
-shared across all worktrees of one repository, while Cargo build artifacts
-are isolated per worktree under
+the volume name. The volume backs `/codex-cache`. Cargo registry/git downloads,
+Go modules, Go build results, pnpm files, and general XDG caches stay inside
+Docker's Linux filesystem and are shared across all worktrees of one
+repository, while Cargo build artifacts are isolated per worktree under
 `/codex-cache/cargo-targets/<worktree-name>-<path-hash>` so build.rs
 fingerprints cannot leak between worktrees. This is particularly important
-for Rust and Node performance on macOS Docker Desktop.
+for Rust, Go, and Node performance on macOS Docker Desktop.
 
 List or remove caches explicitly:
 

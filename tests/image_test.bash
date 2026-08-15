@@ -69,8 +69,41 @@ test_login_shell_keeps_toolchain_on_path() {
     bash -lc '
       set -euo pipefail
       [[ :$PATH: == *:/usr/local/cargo/bin:* ]]
+      [[ :$PATH: == *:/usr/local/go/bin:* ]]
+      [[ :$PATH: == *:/codex-cache/go/bin:* ]]
       [[ :$PATH: == *:/codex-cache/pnpm:* ]]
-      command -v cargo rustc rustfmt cargo-clippy pnpm >/dev/null
+      command -v cargo rustc rustfmt cargo-clippy go gofmt pnpm >/dev/null
+    '
+}
+
+test_go_toolchain_and_cache_are_available() {
+  # This catches a missing/wrong Go archive, lost cache configuration, and a
+  # toolchain that is present on PATH but cannot build a real module.
+  # shellcheck disable=SC2016 # Variables expand inside the container.
+  "$DOCKER_BIN" run --rm \
+    --env HOST_UID=12345 \
+    --env HOST_GID=23456 \
+    "$IMAGE" \
+    bash -lc '
+      set -euo pipefail
+      [[ $(go version) == "go version go1.26.6 linux/$(go env GOARCH)" ]]
+      [[ $(go env GOROOT) == /usr/local/go ]]
+      [[ $GOPATH == /codex-cache/go ]]
+      [[ $GOMODCACHE == /codex-cache/go/pkg/mod ]]
+      [[ $GOCACHE == /codex-cache/go-build ]]
+      if dpkg-query --show golang-go >/dev/null 2>&1; then
+        printf "%s\n" "golang-go unexpectedly installed through dpkg" >&2
+        exit 1
+      fi
+      work=$(mktemp -d)
+      cd "$work"
+      go mod init example.com/docker-agent-smoke >/dev/null 2>&1
+      printf "%s\n" \
+        "package main" \
+        "import \"fmt\"" \
+        "func main() { fmt.Println(\"Hello from Go!\") }" \
+        > main.go
+      [[ $(go run .) == "Hello from Go!" ]]
     '
 }
 
@@ -671,6 +704,7 @@ test_docker_client_tools_are_available_without_a_daemon
 test_runtime_user_has_passwordless_sudo_without_root_group
 test_runtime_user_keeps_host_docker_supplementary_group
 test_login_shell_keeps_toolchain_on_path
+test_go_toolchain_and_cache_are_available
 test_claude_code_and_locale_are_installed
 test_wl_paste_shim_converts_bmp_clipboard_to_png
 test_wl_paste_shim_delegates_other_requests

@@ -1,6 +1,9 @@
 FROM debian:13-slim
 
 ARG NODE_VERSION=24.19.0
+ARG GO_VERSION=1.26.6
+ARG GO_SHA256_AMD64=708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89
+ARG GO_SHA256_ARM64=d0507e9e9d7fe012aae570108cbd76c15de879e17130ab8cb90d4d7445cb1f2e
 ARG CODEX_VERSION=0.147.0
 ARG CLAUDE_CODE_VERSION=2.1.229
 ARG KIMI_CODE_VERSION=0.36.0
@@ -14,7 +17,7 @@ ARG TARGETARCH
 
 ENV RUSTUP_HOME=/usr/local/rustup
 ENV CARGO_HOME=/usr/local/cargo
-ENV PATH=/usr/local/cargo/bin:${PATH}
+ENV PATH=/usr/local/go/bin:/usr/local/cargo/bin:${PATH}
 # Use mold as the default linker for faster release builds; a project's own
 # rustflags or `docker run -e RUSTFLAGS=...` override this.
 ENV RUSTFLAGS="-C link-arg=-fuse-ld=mold"
@@ -68,7 +71,7 @@ RUN printf '%s\n' '%sudo ALL=(ALL:ALL) NOPASSWD: ALL' \
 # Debian's /etc/profile resets PATH for login shells; re-add the toolchain
 # directories so agent commands running through `bash -lc` still find them.
 RUN printf '%s\n' \
-      'export PATH="/codex-cache/pnpm:/usr/local/cargo/bin:$PATH"' \
+      'export PATH="/codex-cache/pnpm:/codex-cache/go/bin:/usr/local/go/bin:/usr/local/cargo/bin:$PATH"' \
       > /etc/profile.d/docker-codex-path.sh
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -136,8 +139,25 @@ RUN set -eux; \
     ln -s /opt/cursor-agent/cursor-agent /usr/local/bin/agent; \
     cursor-agent --version
 
+RUN set -eux; \
+    target_arch="${TARGETARCH:-$(dpkg --print-architecture)}"; \
+    case "$target_arch" in \
+      amd64) go_arch=amd64; go_sha="$GO_SHA256_AMD64" ;; \
+      arm64) go_arch=arm64; go_sha="$GO_SHA256_ARM64" ;; \
+      *) printf 'unsupported target architecture: %s\n' "$target_arch" >&2; exit 1 ;; \
+    esac; \
+    archive=$(mktemp); \
+    curl --proto '=https' --tlsv1.2 --silent --show-error --fail --location \
+      --output "$archive" \
+      "https://go.dev/dl/go${GO_VERSION}.linux-${go_arch}.tar.gz"; \
+    printf '%s  %s\n' "$go_sha" "$archive" | sha256sum --check -; \
+    tar --extract --gzip --file "$archive" --directory /usr/local \
+      --no-same-owner; \
+    rm -f "$archive"; \
+    go version
+
 # Keep Docker client tooling in its own late layer. Changing these packages
-# should not invalidate the more expensive Node, Rust, Codex, and Claude layers.
+# should not invalidate the more expensive Node, Rust, agent, and Go layers.
 RUN DEBIAN_FRONTEND=noninteractive apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
         docker-buildx \

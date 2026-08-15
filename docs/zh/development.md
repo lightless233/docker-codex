@@ -10,6 +10,7 @@
 ```bash
 docker build \
   --build-arg NODE_VERSION=24.19.0 \
+  --build-arg GO_VERSION=1.26.6 \
   --build-arg CODEX_VERSION=0.147.0 \
   --build-arg CLAUDE_CODE_VERSION=2.1.229 \
   --build-arg KIMI_CODE_VERSION=0.36.0 \
@@ -20,6 +21,10 @@ docker build \
 
 `NODE_VERSION` 只会通过显式 build arg 或代码修改升级。镜像不会从 Debian
 或第三方软件源安装 Node.js/npm。
+
+`GO_VERSION` 同样只会显式升级。Go 从官方 linux-amd64/linux-arm64 压缩包
+安装，而不是使用 Debian 软件包；修改版本时还必须根据对应版本发布的校验和
+同步更新 `GO_SHA256_AMD64` 与 `GO_SHA256_ARM64`。
 
 升级 `CURSOR_AGENT_VERSION` 时必须同步更新 Dockerfile 中的
 `CURSOR_AGENT_SHA256_AMD64` 和 `CURSOR_AGENT_SHA256_ARM64`。Cursor 官方

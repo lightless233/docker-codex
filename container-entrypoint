@@ -177,12 +177,15 @@ if [[ -n ${TERM:-} ]] && ! infocmp "$TERM" >/dev/null 2>&1; then
 fi
 export CODEX_HOME=${CODEX_HOME:-/codex-home}
 export CARGO_HOME=/codex-cache/cargo-home
+export GOPATH=/codex-cache/go
+export GOMODCACHE=$GOPATH/pkg/mod
+export GOCACHE=/codex-cache/go-build
 export XDG_CACHE_HOME=/codex-cache/xdg
 export XDG_DATA_HOME=/codex-cache/xdg-data
 export NPM_CONFIG_CACHE=/codex-cache/npm
 export npm_config_store_dir=/codex-cache/pnpm-store
 export PNPM_HOME=/codex-cache/pnpm
-export PATH="$PNPM_HOME:$PATH"
+export PATH="$PNPM_HOME:$GOPATH/bin:$PATH"
 
 # The launcher names the cache volume from the Git common directory, so all
 # worktrees of one repository share /codex-cache. Build artifacts must

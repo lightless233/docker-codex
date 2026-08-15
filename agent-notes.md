@@ -16,6 +16,8 @@ You are running inside a docker-agent development container. Key facts:
   the real target directory with
   `cargo metadata --no-deps --format-version 1 | jq -r .target_directory`
   instead of hardcoding `./target` paths.
+- Go modules, build results, and binaries installed with `go install` persist
+  in the project cache through `GOMODCACHE`, `GOCACHE`, and `GOPATH`.
 - The system Python is externally managed; use `python3 -m venv` for
   installs instead of global `pip install`.
 - The container user has passwordless sudo. Files created in bind-mounted

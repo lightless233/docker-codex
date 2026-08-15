@@ -11,6 +11,7 @@ Build-time versions can be changed explicitly:
 ```bash
 docker build \
   --build-arg NODE_VERSION=24.19.0 \
+  --build-arg GO_VERSION=1.26.6 \
   --build-arg CODEX_VERSION=0.147.0 \
   --build-arg CLAUDE_CODE_VERSION=2.1.229 \
   --build-arg KIMI_CODE_VERSION=0.36.0 \
@@ -21,6 +22,11 @@ docker build \
 
 `NODE_VERSION` upgrades are explicit. The image does not install Node.js or npm
 from Debian or third-party package repositories.
+
+`GO_VERSION` upgrades are also explicit. Go is installed from the official
+linux-amd64/linux-arm64 archive rather than Debian, and changing the version
+requires updating `GO_SHA256_AMD64` and `GO_SHA256_ARM64` from the checksums
+published with that release.
 
 Bumping `CURSOR_AGENT_VERSION` requires updating `CURSOR_AGENT_SHA256_AMD64`
 and `CURSOR_AGENT_SHA256_ARM64` in the Dockerfile in the same change. Cursor
