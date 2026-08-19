@@ -1,0 +1,4 @@
+# The host CODEX_HOME remains shared for authentication, sessions, profiles,
+# skills, and plugins. Hooks are an execution boundary: ignore unmanaged hook
+# definitions from that shared home, the checkout, sessions, and plugins.
+allow_managed_hooks_only = true

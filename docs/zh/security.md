@@ -31,6 +31,14 @@ profile 在容器内保持不可达。当前 Codex 和其命令能读写所选 p
 明文 bearer token，因此只使用最小权限、可撤销的 key。旧的
 `$CODEX_HOME/*.config.toml` 会随完整目录一起暴露。详见
 [Codex 自定义 endpoint profile](codex.md)。
+
+完整 `CODEX_HOME` 挂载也会让容器看到宿主的用户 hooks、插件 hooks 和相关
+配置，但镜像内 `/etc/codex/requirements.toml` 强制启用
+`allow_managed_hooks_only = true`。因此 Codex 不会加载或执行来自宿主用户配置、
+checkout、session 或插件的 hooks；只有镜像管理员通过 managed requirements
+显式配置的 hooks 才能运行。hook 文件本身仍位于读写挂载的 `CODEX_HOME` 中，
+所以该策略提供的是执行隔离，不是文件可见性或防篡改隔离。
+
 Claude 不收到完整 `~/.claude`：官方
 订阅只挂载单个 `.credentials.json`，API/custom 只挂载选中的 profile，
 其他 session 状态来自独立 data root。profile secret 和 OAuth 凭证对选中

@@ -29,6 +29,12 @@ versions. New sessions do not store this alias. The shared directory includes
 configuration, local memories, sessions, skills, plugins, file-based
 credentials, and other Codex state.
 
+Host user hooks, checkout hooks, and plugin hooks in the shared state remain
+visible to the container, but image-managed requirements exclude them from
+Codex hook discovery, so they do not execute in the container. This boundary
+does not prevent other container processes from reading or modifying shared
+hook files; see the [security boundary](security.md) for the threat model.
+
 Concurrent host and container Codex processes use the same state in the same way
 multiple host Codex processes do. Keep the container image's Codex version
 close to the host version when upgrading state formats; version alignment does

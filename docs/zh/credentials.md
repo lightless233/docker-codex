@@ -32,6 +32,11 @@ target 和 `CODEX_HOME` 仍保留宿主使用的逻辑路径。容器的
 - skills 和 plugins
 - 文件形式保存的认证信息
 
+共享目录中的宿主用户 hooks、checkout hooks 和插件 hooks 对容器可见，但镜像
+通过 managed requirements 将它们排除在 Codex 的 hook discovery 之外，因此
+不会在容器内执行。这个边界不会阻止容器中的其他进程读取或修改共享 hook 文件；
+详细威胁模型见[安全边界](security.md)。
+
 宿主和容器中的多个 Codex 进程共享状态，其行为与宿主机上同时运行多个
 Codex 进程相同。升级状态格式时，建议让镜像内 Codex CLI 与宿主版本保持
 接近；版本一致不能替代 session 路径修复。

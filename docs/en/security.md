@@ -28,7 +28,18 @@ interactive config; other managed profiles remain unreachable in the
 container. Codex and commands it runs can read or modify the selected plaintext
 bearer token. Legacy `$CODEX_HOME/*.config.toml` files are
 exposed with the complete directory. Use minimally scoped, revocable keys. See
-[Codex custom endpoint profiles](codex.md). Claude does not receive the complete `~/.claude`: subscription mode mounts one `.credentials.json`, while
+[Codex custom endpoint profiles](codex.md).
+
+The complete `CODEX_HOME` mount also makes host user hooks, plugin hooks, and
+their configuration visible inside the container. However, the image's
+`/etc/codex/requirements.toml` enforces `allow_managed_hooks_only = true`, so
+Codex does not load or execute hooks from host user configuration, the
+checkout, sessions, or plugins. Only hooks explicitly configured by the image
+administrator through managed requirements may run. The hook files remain in
+the read-write `CODEX_HOME` mount, so this is execution isolation, not file
+visibility or tamper isolation.
+
+Claude does not receive the complete `~/.claude`: subscription mode mounts one `.credentials.json`, while
 API/custom modes mount only the selected profile and use state under the
 separate data root. The selected container can read profile secrets and can
 read/write the OAuth file so Claude may refresh it. See

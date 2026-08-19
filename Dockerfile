@@ -167,6 +167,8 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update \
 
 COPY --chmod=0755 container-entrypoint /usr/local/bin/container-entrypoint
 COPY --chmod=0755 container-codex-session-repair /usr/local/bin/container-codex-session-repair
+RUN install -d -m 0755 /etc/codex
+COPY --chmod=0644 container-codex-requirements.toml /etc/codex/requirements.toml
 RUN install -d -m 0755 /usr/local/share/docker-agent
 COPY --chmod=0644 agent-notes.md /usr/local/share/docker-agent/agent-notes.md
 COPY --chmod=0755 container-powershell-shim /usr/local/bin/powershell.exe

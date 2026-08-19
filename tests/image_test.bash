@@ -115,6 +115,9 @@ test_python_and_archive_tools_are_available() {
     python3 -m venv --help >/dev/null
     [[ -r /usr/local/share/docker-agent/agent-notes.md ]]
     [[ -x /usr/local/bin/container-codex-session-repair ]]
+    [[ $(stat -c %a /etc/codex/requirements.toml) == 644 ]]
+    grep -Fx "allow_managed_hooks_only = true" \
+      /etc/codex/requirements.toml >/dev/null
   '
 }
 
@@ -289,6 +292,85 @@ test_claude_code_and_locale_are_installed() {
       grep -Fx "UTF-8" >/dev/null
     TZ=Etc/UTC date "+%Z %z" | grep -Fx "UTC +0000" >/dev/null
   '
+}
+
+test_codex_ignores_shared_unmanaged_hooks() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local codex_home="$TEST_TMP/codex-home"
+  install -d -m 700 "$codex_home"
+  printf '%s\n' \
+    '{' \
+    '  "hooks": {' \
+    '    "Stop": [{' \
+    '      "hooks": [{' \
+    '        "type": "command",' \
+    '        "command": "touch /tmp/docker-agent-host-stop-hook-ran"' \
+    '      }]' \
+    '    }]' \
+    '  }' \
+    '}' >"$codex_home/hooks.json"
+
+  # Query the real Codex hook-discovery endpoint. It lists unmanaged hooks even
+  # before they are trusted, so an empty result proves that the system policy
+  # excluded the shared user hook rather than merely preventing its execution.
+  # shellcheck disable=SC2016 # Python and container variables expand in-container.
+  "$DOCKER_BIN" run --rm --network none \
+    --user "$(id -u):$(id -g)" \
+    --env CODEX_HOME=/codex-hook-test \
+    --env HOME=/tmp/codex-hook-test-home \
+    --mount "type=bind,source=$codex_home,target=/codex-hook-test" \
+    --entrypoint python3 \
+    "$IMAGE" -c '
+import json
+import select
+import subprocess
+import time
+
+process = subprocess.Popen(
+    ["codex", "app-server"],
+    stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    text=True,
+)
+
+def request(message):
+    process.stdin.write(json.dumps(message) + "\n")
+    process.stdin.flush()
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        readable, _, _ = select.select([process.stdout], [], [], 0.25)
+        if not readable:
+            continue
+        response = json.loads(process.stdout.readline())
+        if response.get("id") == message["id"]:
+            return response
+    raise TimeoutError(f"timed out waiting for response {message['\''id'\'']}")
+
+initialize = request({
+    "method": "initialize",
+    "id": 0,
+    "params": {
+        "clientInfo": {
+            "name": "docker_agent_test",
+            "title": "docker-agent image test",
+            "version": "1.0.0",
+        }
+    },
+})
+assert "result" in initialize, initialize
+hooks = request({
+    "method": "hooks/list",
+    "id": 1,
+    "params": {"cwds": ["/workspace"]},
+})
+assert hooks["result"]["data"][0]["hooks"] == [], hooks
+
+process.stdin.close()
+process.terminate()
+process.wait(timeout=5)
+'
 }
 
 test_codex_accepts_one_file_native_provider_profile() {
@@ -949,6 +1031,7 @@ test_runtime_user_keeps_host_docker_supplementary_group
 test_login_shell_keeps_toolchain_on_path
 test_go_toolchain_and_cache_are_available
 test_claude_code_and_locale_are_installed
+test_codex_ignores_shared_unmanaged_hooks
 test_codex_accepts_one_file_native_provider_profile
 test_wl_paste_shim_converts_bmp_clipboard_to_png
 test_wl_paste_shim_delegates_other_requests
