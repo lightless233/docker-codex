@@ -1052,7 +1052,7 @@ test_macos_clipboard_bridge_is_forwarded_and_cleaned_up() {
   assert_line "<JavaScript>" "$osascript_log"
   assert_line "<DOCKER_AGENT_CLIPBOARD_BACKEND=macos>" "$TEST_DOCKER_LOG"
   assert_line "<WSL_INTEROP=/run/docker-agent/macos-clipboard>" "$TEST_DOCKER_LOG"
-  mount_line=$(grep -F 'target=/mnt/c/codex-clipboard' "$TEST_DOCKER_LOG")
+  mount_line=$(grep -F 'target=/run/docker-agent/macos-clipboard,readonly' "$TEST_DOCKER_LOG")
   bridge_dir=${mount_line#<type=bind,source=}
   bridge_dir=${bridge_dir%%,target=*}
   [[ ! -e $bridge_dir ]] ||
@@ -1084,7 +1084,7 @@ test_disable_clipboard_skips_macos_bridge() {
   [[ ! -s $osascript_log ]] || fail "disabled macOS clipboard started osascript"
   assert_no_line "<DOCKER_AGENT_CLIPBOARD_BACKEND=macos>" "$TEST_DOCKER_LOG"
   assert_no_line "<WSL_INTEROP=/run/docker-agent/macos-clipboard>" "$TEST_DOCKER_LOG"
-  assert_not_contains "target=/mnt/c/codex-clipboard" "$TEST_DOCKER_LOG"
+  assert_not_contains "target=/run/docker-agent/macos-clipboard" "$TEST_DOCKER_LOG"
 }
 
 test_disable_clipboard_skips_all_display_forwarding() {

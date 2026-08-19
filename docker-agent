@@ -1346,30 +1346,7 @@ function removeFileIfPresent(fileManager, path) {
 }
 
 function clipboardImage(pasteboard) {
-    var types = ["public.png", "public.tiff", "public.jpeg"];
-    var image = null;
-
-    for (var index = 0; index < types.length; index += 1) {
-        var data = pasteboard.dataForType($(types[index]));
-        if (data) {
-            image = $.NSImage.alloc.initWithData(data);
-            if (image) {
-                break;
-            }
-        }
-    }
-
-    if (!image) {
-        var files = pasteboard.propertyListForType($("NSFilenamesPboardType"));
-        if (files) {
-            var paths = ObjC.unwrap(files);
-            if (paths.length > 0) {
-                image = $.NSImage.alloc.initWithContentsOfFile($(paths[0]));
-            }
-        }
-    }
-
-    return image;
+    return $.NSImage.alloc.initWithPasteboard(pasteboard);
 }
 
 function writeCurrentImage(pasteboard, fileManager, outputPath) {
@@ -1461,6 +1438,10 @@ start_macos_clipboard_bridge() {
     MACOS_CLIPBOARD_ROOT=
     return 0
   fi
+  # Docker Desktop commonly exposes bind mounts as root-owned inside its Linux
+  # VM. The parent remains host-private (0700); make only this random session
+  # directory traversable so the mapped runtime UID can read the snapshot.
+  chmod 755 "$MACOS_CLIPBOARD_DIR"
   trap cleanup_macos_clipboard EXIT
   clipboard_log=$MACOS_CLIPBOARD_DIR/monitor.log
   run_macos_clipboard_monitor "$MACOS_CLIPBOARD_DIR" \
@@ -1487,7 +1468,7 @@ start_macos_clipboard_bridge() {
   fi
 
   reject_mount_comma "$MACOS_CLIPBOARD_DIR"
-  DOCKER_ARGS+=(--mount "type=bind,source=$MACOS_CLIPBOARD_DIR,target=/mnt/c/codex-clipboard")
+  DOCKER_ARGS+=(--mount "type=bind,source=$MACOS_CLIPBOARD_DIR,target=/run/docker-agent/macos-clipboard,readonly")
   DOCKER_ARGS+=(--env "DOCKER_AGENT_CLIPBOARD_BACKEND=macos")
   # Codex 0.148.0 only enters its PowerShell clipboard fallback after a WSL
   # check. WSL_INTEROP is the narrowest marker that reaches that check; the

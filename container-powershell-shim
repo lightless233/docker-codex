@@ -9,8 +9,9 @@
 # Wayland clipboard, which the launcher forwards into the container: it
 # writes the PNG under /mnt/c/codex-clipboard and prints the matching
 # Windows-shaped path. On macOS the launcher mounts a short-lived host
-# NSPasteboard snapshot at the same location. Anything that is not a clipboard
-# image read fails.
+# NSPasteboard snapshot read-only under /run; the shim copies it into the same
+# container-local Windows-shaped output directory. Anything that is not a
+# clipboard image read fails.
 set -euo pipefail
 
 clipboard_mode=0
@@ -29,7 +30,7 @@ fi
 win_dir=/mnt/c/codex-clipboard
 
 if [[ ${DOCKER_AGENT_CLIPBOARD_BACKEND:-} == macos ]]; then
-  latest=$win_dir/latest.png
+  latest=/run/docker-agent/macos-clipboard/latest.png
   [[ -s $latest ]] || exit 1
   out=$(mktemp "$win_dir/clipboard-XXXXXXXX.png")
   if ! cp "$latest" "$out"; then

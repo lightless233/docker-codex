@@ -888,6 +888,7 @@ test_powershell_shim_reads_wayland_clipboard_image() {
 test_powershell_shim_reads_macos_clipboard_snapshot() {
   local clip_dir="$TEST_ROOT/macos clipboard"
   mkdir -p "$clip_dir"
+  chmod 755 "$clip_dir"
 
   "$DOCKER_BIN" run --rm \
     --mount "type=bind,source=$clip_dir,target=/clip" \
@@ -897,11 +898,12 @@ test_powershell_shim_reads_macos_clipboard_snapshot() {
 
   # shellcheck disable=SC2016 # Variables expand inside the container.
   "$DOCKER_BIN" run --rm \
-    --mount "type=bind,source=$clip_dir,target=/mnt/c/codex-clipboard" \
+    --mount "type=bind,source=$clip_dir,target=/run/docker-agent/macos-clipboard,readonly" \
+    --env HOST_UID=12345 \
+    --env HOST_GID=23456 \
     --env CODEX_CLIPBOARD_PS_SCRIPT="$CODEX_CLIPBOARD_PS_SCRIPT" \
     --env DOCKER_AGENT_CLIPBOARD_BACKEND=macos \
-    --entrypoint bash \
-    "$IMAGE" -lc '
+    "$IMAGE" bash -lc '
       set -euo pipefail
       out=$(powershell.exe -NoProfile -Command "$CODEX_CLIPBOARD_PS_SCRIPT")
       [[ $out == C:\\codex-clipboard\\clipboard-*.png ]]
@@ -909,7 +911,17 @@ test_powershell_shim_reads_macos_clipboard_snapshot() {
       [[ $name != latest.png ]]
       mapped=/mnt/c/codex-clipboard/$name
       python3 -c "from PIL import Image; image = Image.open(\"$mapped\"); assert image.format == \"PNG\"; assert image.size == (3, 2)"
-      rm -f /mnt/c/codex-clipboard/latest.png
+    '
+
+  rm -f "$clip_dir/latest.png"
+  # shellcheck disable=SC2016 # Variables expand inside the container.
+  "$DOCKER_BIN" run --rm \
+    --mount "type=bind,source=$clip_dir,target=/run/docker-agent/macos-clipboard,readonly" \
+    --env HOST_UID=12345 \
+    --env HOST_GID=23456 \
+    --env CODEX_CLIPBOARD_PS_SCRIPT="$CODEX_CLIPBOARD_PS_SCRIPT" \
+    --env DOCKER_AGENT_CLIPBOARD_BACKEND=macos \
+    "$IMAGE" bash -lc '
       if powershell.exe -NoProfile -Command "$CODEX_CLIPBOARD_PS_SCRIPT"; then
         printf "%s\\n" "macOS clipboard shim reused a stale image" >&2
         exit 1

@@ -151,6 +151,24 @@ test_missing_uid_and_gid_are_created_without_touching_shared_mounts() {
     "<CALL:gosu>" "<12345:23456>" "<test>" "<-d>" "</codex-home>"
 }
 
+test_macos_clipboard_output_is_container_local_and_owned_by_runtime_user() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local fake_bin="$TEST_TMP/bin"
+  local log="$TEST_TMP/system.log"
+  : >"$log"
+  make_fake_system_commands "$fake_bin"
+
+  WSL_DISTRO_NAME='' DOCKER_AGENT_CLIPBOARD_BACKEND=macos \
+  FAKE_GROUP_EXISTS=1 FAKE_PASSWD_EXISTS=1 \
+    run_entrypoint "$fake_bin" "$log" codex --version
+
+  assert_contiguous_lines "$log" \
+    "<CALL:mkdir>" "<-p>" "</mnt/c/codex-clipboard>"
+  assert_contiguous_lines "$log" \
+    "<CALL:chown>" "<12345:23456>" "</mnt/c/codex-clipboard>"
+}
+
 test_unwritable_codex_home_fails_before_codex_without_changing_permissions() {
   local TEST_TMP
   TEST_TMP=$(new_tmp)
@@ -873,6 +891,7 @@ test_cursor_key_is_not_exported_for_other_agents() {
 
 init_tests
 test_missing_uid_and_gid_are_created_without_touching_shared_mounts
+test_macos_clipboard_output_is_container_local_and_owned_by_runtime_user
 test_unwritable_codex_home_fails_before_codex_without_changing_permissions
 test_existing_gid_is_reused_and_existing_uid_skips_user_creation
 test_host_docker_gid_adds_runtime_user_to_socket_group

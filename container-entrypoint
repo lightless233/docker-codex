@@ -163,9 +163,13 @@ fi
 mkdir -p "$RUNTIME_HOME" /codex-cache
 chown "$HOST_UID:$HOST_GID" "$RUNTIME_HOME" /codex-cache
 
-# On WSL the powershell.exe shim writes clipboard images here and prints the
-# matching Windows path, which Codex maps back under /mnt/c before reading.
-if [[ -n ${WSL_DISTRO_NAME:-} ]]; then
+# The powershell.exe shim writes clipboard images here and prints the matching
+# Windows path, which Codex maps back under /mnt/c before reading. WSL sources
+# data through Wayland; macOS copies its read-only host snapshot into this
+# container-local directory so Docker Desktop's root-owned bind cannot block
+# the mapped runtime UID.
+if [[ -n ${WSL_DISTRO_NAME:-} ||
+      ${DOCKER_AGENT_CLIPBOARD_BACKEND:-} == macos ]]; then
   mkdir -p /mnt/c/codex-clipboard
   chown "$HOST_UID:$HOST_GID" /mnt/c/codex-clipboard
 fi

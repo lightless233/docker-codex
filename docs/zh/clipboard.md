@@ -14,16 +14,17 @@ socket（`XAUTHORITY` 存在时同样只读挂载）。注意容器内的任意�
 
 macOS Docker Desktop 无法把宿主 `NSPasteboard` 直接挂进 Linux 容器。
 启动 `docker-codex` 时，启动器因此运行一个随会话退出的 `osascript`
-监视器：它只在剪贴板发生变化时读取 PNG、TIFF、JPEG 或 Finder 中复制的
-图片文件，统一转换为 PNG，原子写入 data home 下的私有会话目录，再把该
-目录挂载进容器。文本剪贴板不会写入。当前剪贴板不含图片时，旧快照会被
-删除，避免误贴上一张图；容器退出后监视器与整个会话目录一并清理。
+监视器：它只在剪贴板发生变化时让 AppKit 解码它所支持的图片
+表示，统一转换为 PNG，原子写入 data home 下的私有会话目录，再把该
+目录只读挂载进容器。文本剪贴板不会写入。当前剪贴板不含图片时，旧快照会
+被删除，避免误贴上一张图；容器退出后监视器与整个会话目录一并清理。
 
 固定的 Codex 0.148.0 只会在判断为 WSL 后调用 PowerShell 图片 fallback，
 所以 macOS 的 Codex 容器仅在宿主监视器成功启动时注入一个最小
-`WSL_INTEROP` 标记。`powershell.exe` shim 随后从挂载目录复制当前快照并
-返回 Codex 预期的 Windows 形状路径。标记不会传给其他 agent；监视器启动
-失败时启动器会警告并继续运行 Codex，只是贴图不可用。
+`WSL_INTEROP` 标记。`powershell.exe` shim 随后从只读挂载复制当前快照到
+容器自身、由运行 UID 持有的输出目录，并返回 Codex 预期的 Windows 形状
+路径。标记不会传给其他 agent；监视器启动失败时启动器会警告并继续运行
+Codex，只是贴图不可用。
 
 WSLg 可能把 PNG 截图以 `image/bmp` 暴露给 Wayland 客户端。Claude Code
 虽然会读取该 BMP 数据，但当前版本的后续图像处理可能无法接受它。镜像

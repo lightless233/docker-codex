@@ -18,9 +18,9 @@ you copy while a session is running.
 Docker Desktop on macOS cannot mount the host `NSPasteboard` directly into a
 Linux container. When `docker-codex` starts, the launcher therefore runs an
 `osascript` monitor that exits with the session. It reacts only to clipboard
-changes, reads PNG, TIFF, JPEG, or an image file copied in Finder, converts the
-image to PNG, and atomically writes it into a private session directory below
-the data home. That directory is mounted into the container. Clipboard text is
+changes, lets AppKit decode any supported pasteboard image representation,
+converts it to PNG, and atomically writes it into a private session directory
+below the data home. That directory is mounted read-only into the container. Clipboard text is
 never written. When the current clipboard has no image, the previous snapshot
 is removed so it cannot be pasted accidentally; the monitor and session
 directory are cleaned up when the container exits.
@@ -28,9 +28,10 @@ directory are cleaned up when the container exits.
 Pinned Codex 0.148.0 calls its PowerShell image fallback only after deciding it
 is running under WSL. The macOS Codex container therefore receives a minimal
 `WSL_INTEROP` marker only after the host monitor starts successfully. The
-`powershell.exe` shim copies the current mounted snapshot and returns the
-Windows-shaped path Codex expects. Other agents do not receive the marker. If
-the monitor cannot start, the launcher warns and continues without image paste.
+`powershell.exe` shim copies the current mounted snapshot into a container-local
+output directory owned by the runtime UID and returns the Windows-shaped path
+Codex expects. Other agents do not receive the marker. If the monitor cannot
+start, the launcher warns and continues without image paste.
 
 WSLg can expose PNG screenshots to Wayland clients as `image/bmp`.
 Claude Code can read those BMP bytes, but the current release can fail during
