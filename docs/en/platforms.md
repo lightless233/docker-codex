@@ -30,6 +30,11 @@ The entrypoint maps the container process to the host numeric UID/GID and adds
 `host.docker.internal` through Docker's `host-gateway`. Keep WSL2 checkouts in
 the Linux filesystem rather than `/mnt/c` when build performance matters.
 
+The primary Codex-home mount target matches the host's logical absolute path.
+When `CODEX_HOME` is a symlink, Docker uses its physical target as the source.
+Both must be shareable by the Docker daemon; failure is reported instead of
+falling back to `/codex-home`.
+
 Linux/WSL can mount the host Claude Code `.credentials.json` as a single file
 with `--official-subscription`; see [Claude Code integration](claude.md) for
 the required path and permissions.
@@ -37,8 +42,10 @@ the required path and permissions.
 ## macOS
 
 Docker Desktop must allow file sharing for the checkout, external Git metadata,
-Codex home, and every `--bind` source. Paths below `/Users` are normally covered
-by the default Docker Desktop settings.
+the physical Codex-home directory, and every `--bind` source. Paths below
+`/Users` are normally covered by the default settings. If `CODEX_HOME` is a
+symlink into another location such as `/Volumes`, share that physical target as
+well.
 
 The entrypoint handles common macOS identities such as UID 501/GID 20 without
 assuming the group name is unused. Host Keychain credentials remain outside

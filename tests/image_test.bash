@@ -111,10 +111,83 @@ test_python_and_archive_tools_are_available() {
   # shellcheck disable=SC2016 # Variables expand inside the container.
   "$DOCKER_BIN" run --rm --entrypoint bash "$IMAGE" -c '
     set -euo pipefail
-    command -v python3 python pip3 unzip zip >/dev/null
+    command -v python3 python pip3 unzip zip container-codex-session-repair >/dev/null
     python3 -m venv --help >/dev/null
     [[ -r /usr/local/share/docker-agent/agent-notes.md ]]
+    [[ -x /usr/local/bin/container-codex-session-repair ]]
   '
+}
+
+test_session_repair_runs_as_host_user_and_persists_to_host() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local codex_home="$TEST_TMP/codex home"
+  local output="$TEST_TMP/output"
+  mkdir -p "$codex_home/sessions/2026/08/19"
+
+  python3 - "$codex_home" <<'PY'
+import json
+import sqlite3
+import sys
+from pathlib import Path
+
+home = Path(sys.argv[1])
+session_id = "image-session"
+relative = Path("2026/08/19/image-session.jsonl")
+rollout = home / "sessions" / relative
+rollout.write_text(
+    json.dumps({"type": "session_meta", "payload": {"id": session_id}}) + "\n",
+    encoding="utf-8",
+)
+with sqlite3.connect(home / "state_5.sqlite") as database:
+    database.execute("CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT)")
+    database.execute(
+        "INSERT INTO threads VALUES (?, ?)",
+        (session_id, "/codex-home/sessions/" + str(relative)),
+    )
+PY
+
+  "$DOCKER_BIN" run --rm \
+    --network none \
+    --env "HOST_UID=$(id -u)" \
+    --env "HOST_GID=$(id -g)" \
+    --env "CODEX_HOME=$codex_home" \
+    --mount "type=bind,source=$codex_home,target=$codex_home" \
+    --mount "type=bind,source=$codex_home,target=/codex-home" \
+    "$IMAGE" container-codex-session-repair >"$output"
+
+  assert_contains "updated: 1" "$output"
+  assert_contains "skipped: 0" "$output"
+  python3 - "$codex_home" "$(id -u)" "$(id -g)" <<'PY'
+import os
+import sqlite3
+import sys
+from pathlib import Path
+
+home = Path(sys.argv[1])
+uid = int(sys.argv[2])
+gid = int(sys.argv[3])
+with sqlite3.connect(home / "state_5.sqlite") as database:
+    path = database.execute(
+        "SELECT rollout_path FROM threads WHERE id = 'image-session'"
+    ).fetchone()[0]
+assert path == str(home / "sessions/2026/08/19/image-session.jsonl"), path
+backups = list((home / "session-repair-backups").glob("*.bak"))
+assert len(backups) == 1, backups
+assert backups[0].stat().st_uid == uid
+assert backups[0].stat().st_gid == gid
+assert os.stat(backups[0]).st_mode & 0o777 == 0o600
+PY
+
+  "$DOCKER_BIN" run --rm \
+    --network none \
+    --env "HOST_UID=$(id -u)" \
+    --env "HOST_GID=$(id -g)" \
+    --env "CODEX_HOME=$codex_home" \
+    --mount "type=bind,source=$codex_home,target=$codex_home" \
+    --mount "type=bind,source=$codex_home,target=/codex-home" \
+    "$IMAGE" container-codex-session-repair >"$output"
+  assert_contains "updated: 0" "$output"
 }
 
 test_macos_uid_is_created_without_range_warning() {
@@ -205,7 +278,7 @@ test_agent_notes_are_readable_by_runtime_user() {
 test_claude_code_and_locale_are_installed() {
   "$DOCKER_BIN" run --rm --entrypoint bash "$IMAGE" -lc '
     set -euo pipefail
-    codex --version | grep -Fx "codex-cli 0.147.0" >/dev/null
+    codex --version | grep -Fx "codex-cli 0.148.0" >/dev/null
     claude --version | grep -F "2.1.229" >/dev/null
     kimi --version | grep -Fx "0.36.0" >/dev/null
     cursor-agent --version | grep -Fx "2026.08.11-e8db854" >/dev/null
@@ -772,6 +845,7 @@ test_wl_paste_shim_delegates_other_requests
 test_claude_tui_pastes_bmp_clipboard_with_ctrl_v
 test_claude_runtime_is_non_root_utc_and_en_us
 test_python_and_archive_tools_are_available
+test_session_repair_runs_as_host_user_and_persists_to_host
 test_agent_notes_are_readable_by_runtime_user
 test_mold_is_default_linker_and_sccache_is_available
 test_kimi_notes_reach_the_path_kimi_reads

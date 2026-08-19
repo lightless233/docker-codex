@@ -4,7 +4,7 @@ ARG NODE_VERSION=24.19.0
 ARG GO_VERSION=1.26.6
 ARG GO_SHA256_AMD64=708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89
 ARG GO_SHA256_ARM64=d0507e9e9d7fe012aae570108cbd76c15de879e17130ab8cb90d4d7445cb1f2e
-ARG CODEX_VERSION=0.147.0
+ARG CODEX_VERSION=0.148.0
 ARG CLAUDE_CODE_VERSION=2.1.229
 ARG KIMI_CODE_VERSION=0.36.0
 ARG CURSOR_AGENT_VERSION=2026.08.11-e8db854
@@ -166,6 +166,7 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --chmod=0755 container-entrypoint /usr/local/bin/container-entrypoint
+COPY --chmod=0755 container-codex-session-repair /usr/local/bin/container-codex-session-repair
 RUN install -d -m 0755 /usr/local/share/docker-agent
 COPY --chmod=0644 agent-notes.md /usr/local/share/docker-agent/agent-notes.md
 COPY --chmod=0755 container-powershell-shim /usr/local/bin/powershell.exe

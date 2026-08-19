@@ -11,7 +11,7 @@
 docker build \
   --build-arg NODE_VERSION=24.19.0 \
   --build-arg GO_VERSION=1.26.6 \
-  --build-arg CODEX_VERSION=0.147.0 \
+  --build-arg CODEX_VERSION=0.148.0 \
   --build-arg CLAUDE_CODE_VERSION=2.1.229 \
   --build-arg KIMI_CODE_VERSION=0.36.0 \
   --build-arg CURSOR_AGENT_VERSION=2026.08.11-e8db854 \
@@ -50,9 +50,12 @@ DOCKER_AGENT_TEST_IMAGE=docker-agent:local tests/image_test.bash
 ```
 
 shell 测试会使用真实的临时 Git 仓库、linked worktree 和 submodule，只在
-Docker 外部边界使用 fake command。独立的镜像测试会运行真实容器，验证
+Docker 外部边界使用 fake command。`session_repair_test.py` 只在临时
+`CODEX_HOME` 中验证 SQLite/WAL 一致性备份、路径与 session ID 校验、锁超时、
+事务回滚和幂等性，绝不读取或修改用户真实 Codex 状态。独立的镜像测试会运行真实容器，验证
 Debian、Node 安装来源、Codex/Claude/Kimi 版本、数值 UID/GID、Claude 的
-UTC/locale/遥测策略、Kimi 指令文件的落点、未加入 root 组以及免密 sudo。
+UTC/locale/遥测策略、Kimi 指令文件的落点、Codex session 修复工具的降权运行、
+未加入 root 组以及免密 sudo。
 `bash32_compat_test.bash` 会在官方 Bash 3.2 镜像内重新运行完整 shell 测试，
 覆盖 macOS 自带 Bash 的语法和运行时行为；首次运行需要拉取镜像和 Alpine
 测试依赖。

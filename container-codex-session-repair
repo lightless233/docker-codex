@@ -1,0 +1,313 @@
+#!/usr/bin/env python3
+"""Safely migrate legacy /codex-home rollout paths in Codex state."""
+
+import datetime
+import json
+import os
+import sqlite3
+import stat
+import sys
+import uuid
+from pathlib import Path, PurePosixPath
+
+
+PROGRAM = "container-codex-session-repair"
+DATABASE_NAME = "state_5.sqlite"
+LEGACY_PREFIX = "/codex-home/sessions/"
+BACKUP_DIRECTORY = "session-repair-backups"
+REQUIRED_COLUMNS = {"id", "rollout_path"}
+DEFAULT_TIMEOUT_SECONDS = 5.0
+MAX_TIMEOUT_SECONDS = 30.0
+
+
+class RepairError(Exception):
+    pass
+
+
+def error(message):
+    print(f"{PROGRAM}: {message}", file=sys.stderr)
+
+
+def path_is_within(child, parent):
+    try:
+        return os.path.commonpath((child, parent)) == parent
+    except ValueError:
+        return False
+
+
+def configured_timeout():
+    raw = os.environ.get(
+        "DOCKER_AGENT_SESSION_REPAIR_TIMEOUT_SECONDS",
+        str(DEFAULT_TIMEOUT_SECONDS),
+    )
+    try:
+        timeout = float(raw)
+    except ValueError as exc:
+        raise RepairError(f"invalid database lock timeout: {raw}") from exc
+    if not 0 < timeout <= MAX_TIMEOUT_SECONDS:
+        raise RepairError(
+            f"database lock timeout must be greater than 0 and no more than "
+            f"{MAX_TIMEOUT_SECONDS:g} seconds"
+        )
+    return timeout
+
+
+def resolve_home():
+    raw = os.environ.get("CODEX_HOME")
+    if not raw:
+        raise RepairError("CODEX_HOME is required")
+    if not os.path.isabs(raw):
+        raise RepairError(f"CODEX_HOME must be an absolute path: {raw}")
+    logical_home = Path(os.path.normpath(raw))
+    if not logical_home.is_dir():
+        raise RepairError(f"Codex home is not a directory: {logical_home}")
+    if not os.access(logical_home, os.R_OK | os.W_OK | os.X_OK):
+        raise RepairError(f"Codex home is not readable and writable: {logical_home}")
+    physical_home = Path(os.path.realpath(logical_home))
+    if physical_home == Path("/"):
+        raise RepairError("Codex home must not resolve to the filesystem root")
+    return logical_home, physical_home
+
+
+def validate_database_path(logical_home, physical_home):
+    database = logical_home / DATABASE_NAME
+    if not database.exists():
+        raise RepairError(f"state database does not exist: {database}")
+    try:
+        mode = database.stat().st_mode
+    except OSError as exc:
+        raise RepairError(f"cannot inspect state database: {database}: {exc}") from exc
+    if not stat.S_ISREG(mode):
+        raise RepairError(f"state database is not a regular file: {database}")
+    database_real = os.path.realpath(database)
+    if not path_is_within(database_real, str(physical_home)):
+        raise RepairError(f"state database resolves outside Codex home: {database}")
+    return database
+
+
+def integrity_check(connection, description):
+    try:
+        rows = [row[0] for row in connection.execute("PRAGMA integrity_check")]
+    except sqlite3.DatabaseError as exc:
+        raise RepairError(f"{description} integrity check failed: {exc}") from exc
+    if rows != ["ok"]:
+        detail = rows[0] if rows else "no result"
+        raise RepairError(f"{description} integrity check failed: {detail}")
+
+
+def validate_schema(connection):
+    table = connection.execute(
+        "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'threads'"
+    ).fetchone()
+    if table is None:
+        raise RepairError("unsupported state database schema: missing threads table")
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(threads)")}
+    missing = sorted(REQUIRED_COLUMNS - columns)
+    if missing:
+        raise RepairError(
+            "unsupported state database schema: missing threads column(s): "
+            + ", ".join(missing)
+        )
+
+
+def prepare_backup_directory(logical_home, physical_home):
+    backup_dir = logical_home / BACKUP_DIRECTORY
+    if backup_dir.exists() or backup_dir.is_symlink():
+        if backup_dir.is_symlink() or not backup_dir.is_dir():
+            raise RepairError(f"backup path is not a safe directory: {backup_dir}")
+    else:
+        try:
+            backup_dir.mkdir(mode=0o700)
+        except OSError as exc:
+            raise RepairError(f"cannot create backup directory: {backup_dir}: {exc}") from exc
+    backup_real = os.path.realpath(backup_dir)
+    if not path_is_within(backup_real, str(physical_home)):
+        raise RepairError(f"backup directory resolves outside Codex home: {backup_dir}")
+    if not os.access(backup_dir, os.R_OK | os.W_OK | os.X_OK):
+        raise RepairError(f"backup directory is not readable and writable: {backup_dir}")
+    return backup_dir
+
+
+def create_consistent_backup(database, backup_dir, timeout):
+    timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    unique = uuid.uuid4().hex[:12]
+    final_path = backup_dir / f"{DATABASE_NAME}.session-repair-{timestamp}-{unique}.bak"
+    temporary_path = backup_dir / f".{final_path.name}.tmp"
+    source = None
+    destination = None
+    try:
+        source = sqlite3.connect(database, timeout=timeout)
+        source.execute(f"PRAGMA busy_timeout = {int(timeout * 1000)}")
+        destination = sqlite3.connect(temporary_path)
+        source.backup(destination)
+        integrity_check(destination, "backup")
+        destination.close()
+        destination = None
+        source.close()
+        source = None
+        os.chmod(temporary_path, 0o600)
+        os.replace(temporary_path, final_path)
+    except (OSError, sqlite3.Error, RepairError) as exc:
+        if destination is not None:
+            destination.close()
+        if source is not None:
+            source.close()
+        try:
+            temporary_path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+        if isinstance(exc, RepairError):
+            raise
+        raise RepairError(f"cannot create consistent database backup: {exc}") from exc
+    return final_path
+
+
+def metadata_session_id(path):
+    try:
+        with path.open("r", encoding="utf-8") as rollout:
+            first_line = rollout.readline()
+    except (OSError, UnicodeError):
+        return None
+    if not first_line:
+        return None
+    try:
+        record = json.loads(first_line)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(record, dict) or record.get("type") != "session_meta":
+        return None
+    payload = record.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    session_id = payload.get("id")
+    return session_id if isinstance(session_id, str) else None
+
+
+def candidate_update(logical_home, physical_home, row_id, old_path):
+    if not isinstance(row_id, str) or not row_id:
+        return None
+    if not isinstance(old_path, str) or not old_path.startswith(LEGACY_PREFIX):
+        return None
+    suffix = old_path[len(LEGACY_PREFIX) :]
+    if not suffix or os.path.isabs(suffix) or "\x00" in suffix:
+        return None
+    parts = PurePosixPath(suffix).parts
+    if not parts or any(part in ("", ".", "..") for part in parts):
+        return None
+
+    candidate = logical_home / "sessions" / Path(*parts)
+    physical_sessions = physical_home / "sessions"
+    candidate_real = os.path.realpath(candidate)
+    if not path_is_within(candidate_real, str(physical_sessions)):
+        return None
+    try:
+        mode = candidate.stat().st_mode
+    except OSError:
+        return None
+    if not stat.S_ISREG(mode) or not os.access(candidate, os.R_OK):
+        return None
+    if metadata_session_id(candidate) != row_id:
+        return None
+    return str(candidate)
+
+
+def collect_updates(connection, logical_home, physical_home):
+    rows = connection.execute(
+        "SELECT id, rollout_path FROM threads "
+        "WHERE substr(rollout_path, 1, ?) = ?",
+        (len(LEGACY_PREFIX), LEGACY_PREFIX),
+    ).fetchall()
+    updates = []
+    skipped = 0
+    for row_id, old_path in rows:
+        new_path = candidate_update(logical_home, physical_home, row_id, old_path)
+        if new_path is None:
+            skipped += 1
+        else:
+            updates.append((row_id, old_path, new_path))
+    return updates, skipped
+
+
+def apply_updates(connection, updates):
+    changes_before = connection.total_changes
+    try:
+        for row_id, old_path, new_path in updates:
+            cursor = connection.execute(
+                "UPDATE threads SET rollout_path = ? "
+                "WHERE id = ? AND rollout_path = ?",
+                (new_path, row_id, old_path),
+            )
+            if cursor.rowcount != 1:
+                raise RepairError("session update did not match exactly one database row")
+        if connection.total_changes - changes_before != len(updates):
+            raise RepairError("session updates caused unexpected database side effects")
+    except (sqlite3.Error, RepairError) as exc:
+        if isinstance(exc, RepairError):
+            raise
+        raise RepairError(f"session path update failed: {exc}") from exc
+
+
+def repair():
+    timeout = configured_timeout()
+    logical_home, physical_home = resolve_home()
+    database = validate_database_path(logical_home, physical_home)
+    connection = sqlite3.connect(database, timeout=timeout, isolation_level=None)
+    connection.execute(f"PRAGMA busy_timeout = {int(timeout * 1000)}")
+    backup_path = None
+    try:
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+        except sqlite3.OperationalError as exc:
+            if "locked" in str(exc).lower() or "busy" in str(exc).lower():
+                raise RepairError(
+                    "database lock timeout; exit host and container Codex processes, "
+                    "then retry"
+                ) from exc
+            raise RepairError(f"cannot start repair transaction: {exc}") from exc
+
+        backup_dir = prepare_backup_directory(logical_home, physical_home)
+        backup_path = create_consistent_backup(database, backup_dir, timeout)
+        print(f"backup: {backup_path}", flush=True)
+
+        integrity_check(connection, "state database")
+        validate_schema(connection)
+        updates, skipped = collect_updates(connection, logical_home, physical_home)
+        apply_updates(connection, updates)
+        integrity_check(connection, "state database after update")
+        connection.commit()
+        print(f"updated: {len(updates)}")
+        print(f"skipped: {skipped}")
+    except Exception:
+        if connection.in_transaction:
+            connection.rollback()
+        raise
+    finally:
+        connection.close()
+    return backup_path
+
+
+def main():
+    os.umask(0o077)
+    if sys.argv[1:] == ["--check-capability"]:
+        return 0
+    if sys.argv[1:]:
+        error("unexpected arguments")
+        return 2
+    try:
+        repair()
+    except RepairError as exc:
+        error(str(exc))
+        return 1
+    except sqlite3.DatabaseError as exc:
+        error(f"state database operation failed: {exc}")
+        return 1
+    except OSError as exc:
+        error(f"filesystem operation failed: {exc}")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -194,6 +194,19 @@ export npm_config_store_dir=/codex-cache/pnpm-store
 export PNPM_HOME=/codex-cache/pnpm
 export PATH="$PNPM_HOME:$GOPATH/bin:$PATH"
 
+case ${1:-} in
+  codex|container-codex-session-repair)
+    if ! gosu "$HOST_UID:$HOST_GID" test -d "$CODEX_HOME" ||
+       ! gosu "$HOST_UID:$HOST_GID" test -r "$CODEX_HOME" ||
+       ! gosu "$HOST_UID:$HOST_GID" test -w "$CODEX_HOME" ||
+       ! gosu "$HOST_UID:$HOST_GID" test -x "$CODEX_HOME"; then
+      printf 'docker-codex: Codex home is not a readable and writable directory for UID %s/GID %s: %s\n' \
+        "$HOST_UID" "$HOST_GID" "$CODEX_HOME" >&2
+      exit 1
+    fi
+    ;;
+esac
+
 # The launcher names the cache volume from the Git common directory, so all
 # worktrees of one repository share /codex-cache. Build artifacts must
 # therefore be scoped per worktree (computed from the worktree root below):

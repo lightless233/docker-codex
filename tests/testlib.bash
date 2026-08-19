@@ -164,7 +164,15 @@ case ${1:-} in
     exit 0
     ;;
   info) exit "${DOCKER_AGENT_TEST_INFO_STATUS:-0}" ;;
-  image|build|run) exit 0 ;;
+  run)
+    for argument in "$@"; do
+      if [[ $argument == --check-capability ]]; then
+        exit "${DOCKER_AGENT_TEST_REPAIR_CAPABILITY_STATUS:-0}"
+      fi
+    done
+    exit 0
+    ;;
+  image|build) exit 0 ;;
 esac
 exit 2
 EOF
@@ -200,6 +208,7 @@ run_named_launcher() {
   local directory=$1 project_root=$2 launcher_name=$3
   local agent_config_home=${DOCKER_AGENT_CONFIG_HOME:-$TEST_AGENT_CONFIG_HOME}
   local agent_data_home
+  local host_codex_home=${TEST_CODEX_HOME_OVERRIDE:-$TEST_CODEX_HOME}
   local host_claude_home=${CLAUDE_CONFIG_DIR:-$TEST_CLAUDE_HOME}
   local host_kimi_home=${KIMI_CODE_HOME:-$TEST_KIMI_HOME}
   local host_cursor_home=${DOCKER_AGENT_CURSOR_HOME:-$TEST_CURSOR_HOME}
@@ -213,7 +222,7 @@ run_named_launcher() {
   shift 3
   (
     cd "$directory"
-    CODEX_HOME="$TEST_CODEX_HOME" \
+    CODEX_HOME="$host_codex_home" \
       DOCKER_AGENT_CONFIG_HOME="$agent_config_home" \
       DOCKER_AGENT_DATA_HOME="$agent_data_home" \
       CLAUDE_CONFIG_DIR="$host_claude_home" \

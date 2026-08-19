@@ -7,14 +7,64 @@ protected API key file; see [Cursor Agent integration](cursor-agent.md).
 
 ## Codex configuration, memory, and authentication
 
-The complete host `${CODEX_HOME:-$HOME/.codex}` is mounted read-write at
-`/codex-home`, and the container receives `CODEX_HOME=/codex-home`. This shares
+The complete host `${CODEX_HOME:-$HOME/.codex}` is mounted read-write at the
+same logical absolute path inside the container, and the container receives
+that path as `CODEX_HOME`. For example, a host path of
+`/home/lightless/.codex` produces:
+
+```text
+source=/home/lightless/.codex
+target=/home/lightless/.codex
+CODEX_HOME=/home/lightless/.codex
+```
+
+When host `CODEX_HOME` is a symlink, the Docker source is its resolved physical
+directory while the target and `CODEX_HOME` preserve the logical path used by
+the host. Container `HOME=/home/codex` remains private; the full host home is
+not mounted.
+
+The same physical directory is also mounted at `/codex-home`, but only as a
+compatibility alias for absolute session paths written by older docker-codex
+versions. New sessions do not store this alias. The shared directory includes
 configuration, local memories, sessions, skills, plugins, file-based
-credentials, and other Codex state with local Codex clients.
+credentials, and other Codex state.
 
 Concurrent host and container Codex processes use the same state in the same way
 multiple host Codex processes do. Keep the container image's Codex version
-aligned with the host when upgrading state formats.
+close to the host version when upgrading state formats; version alignment does
+not replace session-path repair.
+
+### Repairing legacy session paths
+
+Sessions created by an older container may still reference
+`/codex-home/sessions/...` in the state database. Exit every host and container
+Codex process, then run the repair explicitly:
+
+```bash
+docker-codex --repair-sessions
+# Equivalent entry point
+docker-agent codex --repair-sessions
+```
+
+The command uses tooling inside the image, so the host does not need `sqlite3`
+or `jq`. It takes a bounded database write lock, first creates a consistent
+backup including committed WAL data under
+`CODEX_HOME/session-repair-backups`, and prints the backup's full host path.
+It migrates only legacy-prefix rows whose rollout remains inside the current
+`sessions` directory, is readable, contains parseable JSON session metadata,
+and has a metadata session ID matching the database row ID.
+
+Successful output also reports updated and skipped counts. Missing,
+out-of-bounds, malformed, or ID-mismatched records are skipped; no session file
+or database row is deleted. Repeated runs are safe and do not change already
+migrated rows. A normal `docker-codex` launch never runs the repair.
+
+A persistent database lock, unsupported schema, or failed integrity check
+rolls the transaction back and exits nonzero. Published backups are never
+cleaned up by the tool. Unmigrated legacy sessions can still be resumed in the
+container through the `/codex-home` compatibility alias. Restoring a backup is
+an explicit user operation and must be done only after every Codex process has
+exited.
 
 Authentication has an operating-system boundary:
 

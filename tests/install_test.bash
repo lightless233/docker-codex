@@ -38,6 +38,8 @@ test_installer_copies_all_launchers_from_any_working_directory() {
     <("$prefix/bin/docker-agent" --help)
   assert_contains "Usage: docker-codex" \
     <("$prefix/bin/docker-codex" --help)
+  assert_contains "--repair-sessions" \
+    <("$prefix/bin/docker-codex" --help)
   assert_contains "Usage: docker-claude" \
     <("$prefix/bin/docker-claude" --help)
   assert_contains "Usage: docker-kimi" \

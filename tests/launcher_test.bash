@@ -109,6 +109,8 @@ test_normal_checkout_preserves_paths_and_codex_arguments() {
   run_launcher "$repo" "$ROOT" -- review "prompt with spaces"
 
   assert_line "<type=bind,source=$repo,target=$repo>" "$TEST_DOCKER_LOG"
+  assert_line "<CODEX_HOME=$TEST_CODEX_HOME>" "$TEST_DOCKER_LOG"
+  assert_line "<type=bind,source=$TEST_CODEX_HOME,target=$TEST_CODEX_HOME>" "$TEST_DOCKER_LOG"
   assert_line "<type=bind,source=$TEST_CODEX_HOME,target=/codex-home>" "$TEST_DOCKER_LOG"
   assert_line "<--workdir>" "$TEST_DOCKER_LOG"
   assert_line "<$repo>" "$TEST_DOCKER_LOG"
@@ -123,6 +125,166 @@ test_normal_checkout_preserves_paths_and_codex_arguments() {
     "<review>" \
     "<prompt with spaces>"
   assert_no_line "<type=bind,source=$repo/.git,target=$repo/.git>" "$TEST_DOCKER_LOG"
+}
+
+test_codex_home_symlink_preserves_logical_target_and_uses_physical_source() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  local physical_home="$TEST_TMP/physical codex home"
+  local logical_home="$TEST_TMP/logical codex home"
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+  mkdir -p "$physical_home"
+  ln -s "$physical_home" "$logical_home"
+
+  TEST_CODEX_HOME_OVERRIDE=$logical_home \
+    run_launcher "$repo" "$ROOT" -- status
+
+  assert_line "<CODEX_HOME=$logical_home>" "$TEST_DOCKER_LOG"
+  assert_line "<type=bind,source=$physical_home,target=$logical_home>" \
+    "$TEST_DOCKER_LOG"
+  assert_line "<type=bind,source=$physical_home,target=/codex-home>" \
+    "$TEST_DOCKER_LOG"
+  assert_no_line "<CODEX_HOME=$physical_home>" "$TEST_DOCKER_LOG"
+}
+
+test_codex_home_must_be_an_absolute_directory() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  local errors="$TEST_TMP/errors"
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+
+  if TEST_CODEX_HOME_OVERRIDE="relative-codex-home" \
+      run_launcher "$repo" "$ROOT" -- status >"$errors" 2>&1; then
+    fail "relative CODEX_HOME unexpectedly launched Codex"
+  fi
+
+  assert_contains "Codex home must be an absolute path" "$errors"
+  assert_no_line "<run>" "$TEST_DOCKER_LOG"
+}
+
+test_codex_home_must_not_resolve_to_the_host_root() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  local root_link="$TEST_TMP/root-link"
+  local errors="$TEST_TMP/errors"
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+  ln -s / "$root_link"
+
+  if TEST_CODEX_HOME_OVERRIDE=$root_link \
+      run_launcher "$repo" "$ROOT" -- status >"$errors" 2>&1; then
+    fail "root-resolving CODEX_HOME unexpectedly launched Codex"
+  fi
+
+  assert_contains "must not resolve to the host filesystem root" "$errors"
+  assert_no_line "<run>" "$TEST_DOCKER_LOG"
+}
+
+test_checkout_used_as_codex_home_does_not_duplicate_the_mount_target() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+
+  TEST_CODEX_HOME_OVERRIDE=$repo \
+    run_launcher "$repo" "$ROOT" -- status
+
+  assert_line "<CODEX_HOME=$repo>" "$TEST_DOCKER_LOG"
+  [[ $(grep -Fxc "<type=bind,source=$repo,target=$repo>" "$TEST_DOCKER_LOG") == 1 ]] ||
+    fail "checkout/CODEX_HOME target was mounted more than once"
+  assert_line "<type=bind,source=$repo,target=/codex-home>" "$TEST_DOCKER_LOG"
+}
+
+test_repair_sessions_uses_dedicated_noninteractive_runtime() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+
+  DOCKER_AGENT_TEST_FORCE_TTY=1 \
+    run_named_launcher "$repo" "$ROOT" docker-codex --repair-sessions
+
+  assert_line "<CODEX_HOME=$TEST_CODEX_HOME>" "$TEST_DOCKER_LOG"
+  assert_line "<type=bind,source=$TEST_CODEX_HOME,target=$TEST_CODEX_HOME>" \
+    "$TEST_DOCKER_LOG"
+  assert_line "<type=bind,source=$TEST_CODEX_HOME,target=/codex-home>" \
+    "$TEST_DOCKER_LOG"
+  assert_line "<container-codex-session-repair>" "$TEST_DOCKER_LOG"
+  assert_no_line "<-it>" "$TEST_DOCKER_LOG"
+  assert_no_line "<codex>" "$TEST_DOCKER_LOG"
+  assert_no_line "<type=bind,source=$repo,target=$repo>" "$TEST_DOCKER_LOG"
+  assert_not_contains "target=/codex-cache" "$TEST_DOCKER_LOG"
+  assert_no_line "<--workdir>" "$TEST_DOCKER_LOG"
+  assert_ordered_lines "$TEST_DOCKER_LOG" "<--network>" "<none>"
+  assert_no_line "<docker-agent>" "$TEST_DOCKER_LOG"
+
+  : >"$TEST_DOCKER_LOG"
+  run_named_launcher "$repo" "$ROOT" docker-agent \
+    codex --repair-sessions
+  assert_line "<container-codex-session-repair>" "$TEST_DOCKER_LOG"
+
+  : >"$TEST_DOCKER_LOG"
+  DOCKER_AGENT_PAT_PATH="$TEST_TMP/default-pat-is-ignored" \
+    run_launcher "$repo" "$ROOT" --repair-sessions
+  assert_line "<container-codex-session-repair>" "$TEST_DOCKER_LOG"
+  assert_not_contains "target=/codex-credentials/pat" "$TEST_DOCKER_LOG"
+}
+
+test_repair_sessions_is_codex_only_and_not_confused_with_agent_arguments() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  local errors="$TEST_TMP/errors"
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+
+  run_launcher "$repo" "$ROOT" -- --repair-sessions
+  assert_ordered_lines "$TEST_DOCKER_LOG" \
+    "<codex>" "<--yolo>" "<--disable>" "<apps>" "<--repair-sessions>"
+  assert_no_line "<container-codex-session-repair>" "$TEST_DOCKER_LOG"
+
+  : >"$TEST_DOCKER_LOG"
+  if run_named_launcher "$repo" "$ROOT" docker-agent \
+      claude --repair-sessions >"$errors" 2>&1; then
+    fail "Claude unexpectedly accepted --repair-sessions"
+  fi
+  assert_contains "--repair-sessions is only valid for Codex" "$errors"
+  assert_no_line "<run>" "$TEST_DOCKER_LOG"
+
+  : >"$TEST_DOCKER_LOG"
+  if run_launcher "$repo" "$ROOT" \
+      --repair-sessions --isolated repair >"$errors" 2>&1; then
+    fail "repair mode unexpectedly accepted --isolated"
+  fi
+  assert_contains "--repair-sessions cannot be combined" "$errors"
+  assert_no_line "<run>" "$TEST_DOCKER_LOG"
+}
+
+test_repair_sessions_checks_image_capability_before_mounting_state() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  local errors="$TEST_TMP/errors"
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+
+  if DOCKER_AGENT_TEST_REPAIR_CAPABILITY_STATUS=127 \
+      run_launcher "$repo" "$ROOT" --repair-sessions \
+      >"$errors" 2>&1; then
+    fail "image without repair support unexpectedly mounted Codex state"
+  fi
+
+  assert_contains "image does not provide Codex session repair support" "$errors"
+  assert_line "<--check-capability>" "$TEST_DOCKER_LOG"
+  assert_not_contains "CODEX_HOME=" "$TEST_DOCKER_LOG"
+  assert_not_contains "target=/codex-home" "$TEST_DOCKER_LOG"
 }
 
 test_non_git_directory_launches_codex_and_claude() {
@@ -897,6 +1059,7 @@ test_help_documents_public_interface_and_retained_worktrees() {
   assert_contains "--pat TOKEN" "$output"
   assert_contains "--pat-path FILE" "$output"
   assert_contains "--disable-clipboard" "$output"
+  assert_contains "--repair-sessions" "$output"
   assert_contains "--help" "$output"
   assert_contains "docker-agent:local" "$output"
   assert_contains "retained" "$output"
@@ -924,6 +1087,13 @@ init_tests
 test_canonical_and_compatibility_entrypoints_dispatch_agents
 test_terminal_capability_is_forwarded_only_with_a_tty
 test_normal_checkout_preserves_paths_and_codex_arguments
+test_codex_home_symlink_preserves_logical_target_and_uses_physical_source
+test_codex_home_must_be_an_absolute_directory
+test_codex_home_must_not_resolve_to_the_host_root
+test_checkout_used_as_codex_home_does_not_duplicate_the_mount_target
+test_repair_sessions_uses_dedicated_noninteractive_runtime
+test_repair_sessions_is_codex_only_and_not_confused_with_agent_arguments
+test_repair_sessions_checks_image_capability_before_mounting_state
 test_non_git_directory_launches_codex_and_claude
 test_git_init_preserves_non_git_cache_and_claude_state_identity
 test_same_named_non_git_directories_are_isolated

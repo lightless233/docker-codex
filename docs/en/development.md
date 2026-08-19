@@ -12,7 +12,7 @@ Build-time versions can be changed explicitly:
 docker build \
   --build-arg NODE_VERSION=24.19.0 \
   --build-arg GO_VERSION=1.26.6 \
-  --build-arg CODEX_VERSION=0.147.0 \
+  --build-arg CODEX_VERSION=0.148.0 \
   --build-arg CLAUDE_CODE_VERSION=2.1.229 \
   --build-arg KIMI_CODE_VERSION=0.36.0 \
   --build-arg CURSOR_AGENT_VERSION=2026.08.11-e8db854 \
@@ -53,10 +53,14 @@ DOCKER_AGENT_TEST_IMAGE=docker-agent:local tests/image_test.bash
 ```
 
 The test suite uses real temporary Git repositories, linked worktrees, and
-submodules while replacing only the external Docker boundary. The separate
-image test runs a real container and verifies Debian, Node provenance,
+submodules while replacing only the external Docker boundary.
+`session_repair_test.py` uses only temporary `CODEX_HOME` fixtures to verify
+SQLite/WAL-consistent backups, path and session-ID validation, lock timeouts,
+transaction rollback, and idempotence; it never reads or modifies real user
+Codex state. The separate image test runs a real container and verifies Debian, Node provenance,
 Codex/Claude/Kimi versions, numeric UID/GID, Claude UTC/locale/telemetry
-policy, where the Kimi instruction file lands, absence of the root group, and
+policy, where the Kimi instruction file lands, execution of the Codex session
+repair tool after dropping privileges, absence of the root group, and
 passwordless sudo. `bash32_compat_test.bash` reruns the complete shell suite in
 the official Bash 3.2 image to cover the syntax and runtime behavior of the
 Bash version shipped with macOS. Its first run pulls the image and Alpine test

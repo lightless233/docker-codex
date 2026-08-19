@@ -67,6 +67,8 @@ Options:
                           the default; legacy DOCKER_CODEX_PAT_PATH also works)
   --disable-clipboard     Do not forward the host clipboard (display sockets)
                           into the container
+  --repair-sessions      Back up and repair legacy /codex-home session paths,
+                          then exit without starting Codex
   --help, -h              Show this help
 
 Arguments after -- are passed to Codex without reinterpretation.
@@ -269,6 +271,32 @@ array_contains() {
 reject_mount_comma() {
   [[ $1 != *,* ]] ||
     die "Docker --mount paths containing commas are unsupported: $1"
+}
+
+resolve_codex_home() {
+  local host_home_physical requested
+  [[ -z ${CODEX_HOME_LOGICAL:-} ]] || return 0
+  requested=${CODEX_HOME:-$HOME/.codex}
+  [[ $requested == /* ]] ||
+    die "Codex home must be an absolute path: $requested"
+  [[ -e $requested ]] || die "Codex home does not exist: $requested"
+  [[ -d $requested ]] || die "Codex home is not a directory: $requested"
+
+  CODEX_HOME_LOGICAL=$(cd -L "$requested" && pwd -L)
+  CODEX_HOME_PHYSICAL=$(cd -P "$requested" && pwd -P)
+  [[ $CODEX_HOME_PHYSICAL != / ]] ||
+    die "Codex home must not resolve to the host filesystem root"
+  host_home_physical=$(cd -P "$HOME" && pwd -P)
+  if path_is_within "$host_home_physical" "$CODEX_HOME_PHYSICAL"; then
+    die "Codex home must not contain the complete host home: $CODEX_HOME_LOGICAL"
+  fi
+  case $CODEX_HOME_LOGICAL in
+    /codex-cache|/codex-credentials|/codex-credentials/*|/home/codex|/run/docker-agent|/run/docker-agent/*)
+      die "Codex home conflicts with a reserved container path: $CODEX_HOME_LOGICAL"
+      ;;
+  esac
+  reject_mount_comma "$CODEX_HOME_LOGICAL"
+  reject_mount_comma "$CODEX_HOME_PHYSICAL"
 }
 
 append_same_path_mount() {
@@ -904,14 +932,14 @@ prepare_claude_state_hook() {
 # Codex reads its own login and config from CODEX_HOME, which the host shares
 # with the container so a login on either side is visible to the other.
 configure_codex_runtime() {
-  local codex_home_source
-  codex_home_source=${CODEX_HOME:-$HOME/.codex}
-  [[ -d $codex_home_source ]] ||
-    die "Codex home does not exist: $codex_home_source"
-  codex_home_source=$(cd "$codex_home_source" && pwd -P)
-  reject_mount_comma "$codex_home_source"
-  DOCKER_ARGS+=(--env "CODEX_HOME=/codex-home")
-  DOCKER_ARGS+=(--mount "type=bind,source=$codex_home_source,target=/codex-home")
+  resolve_codex_home
+  DOCKER_ARGS+=(--env "CODEX_HOME=$CODEX_HOME_LOGICAL")
+  if [[ ${CHECKOUT_ROOT:-} != "$CODEX_HOME_LOGICAL" ]]; then
+    DOCKER_ARGS+=(--mount "type=bind,source=$CODEX_HOME_PHYSICAL,target=$CODEX_HOME_LOGICAL")
+  fi
+  if [[ $CODEX_HOME_LOGICAL != /codex-home ]]; then
+    DOCKER_ARGS+=(--mount "type=bind,source=$CODEX_HOME_PHYSICAL,target=/codex-home")
+  fi
 }
 
 configure_claude_runtime() {
@@ -1083,6 +1111,22 @@ cursor_agent_final_args() {
   fi
 }
 
+prepare_selected_image() {
+  local script_dir
+  if ((BUILD)); then
+    script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+    [[ -f $script_dir/Dockerfile &&
+       -f $script_dir/container-entrypoint &&
+       -f $script_dir/container-codex-session-repair ]] ||
+      die "--build requires the docker-agent source checkout; run the repository copy"
+    "$DOCKER_BIN" buildx version >/dev/null 2>&1 || die_missing_buildx
+    "$DOCKER_BIN" build --tag "$IMAGE" "$script_dir"
+  else
+    "$DOCKER_BIN" image inspect "$IMAGE" >/dev/null 2>&1 ||
+      die "image not found: $IMAGE (run with --build)"
+  fi
+}
+
 DOCKER_BIN=${DOCKER_AGENT_DOCKER_BIN:-${DOCKER_CODEX_DOCKER_BIN:-docker}}
 IMAGE=${DOCKER_AGENT_IMAGE:-${DOCKER_CODEX_IMAGE:-docker-agent:local}}
 HOST_OS=${DOCKER_AGENT_HOST_OS:-${DOCKER_CODEX_HOST_OS:-$(uname -s)}}
@@ -1090,6 +1134,7 @@ DATA_HOME=${DOCKER_AGENT_DATA_HOME:-${DOCKER_CODEX_DATA_HOME:-${XDG_DATA_HOME:-$
 WAYLAND_DIR_OVERRIDE=${DOCKER_AGENT_WAYLAND_DIR:-${DOCKER_CODEX_WAYLAND_DIR:-}}
 X11_DIR_OVERRIDE=${DOCKER_AGENT_X11_DIR:-${DOCKER_CODEX_X11_DIR:-}}
 BUILD=0
+REPAIR_SESSIONS=0
 ISOLATED=
 CLIPBOARD=1
 DEFAULT_NETWORK=docker-agent
@@ -1102,6 +1147,7 @@ ENV_OVERRIDE_KEYS=()
 NETWORKS=()
 PAT_VALUE=
 PAT_PATH=${DOCKER_AGENT_PAT_PATH:-${DOCKER_CODEX_PAT_PATH:-}}
+PAT_OPTION_SET=0
 CLAUDE_CONNECTION=
 CLAUDE_PROFILE_NAME=
 CLAUDE_PROFILE_PATH=
@@ -1167,15 +1213,25 @@ while (($#)); do
     --pat)
       (($# >= 2)) || die "--pat requires a value"
       PAT_VALUE=$2
+      PAT_OPTION_SET=1
       shift 2
       ;;
     --pat-path)
       (($# >= 2)) || die "--pat-path requires a file"
       PAT_PATH=$2
+      PAT_OPTION_SET=1
       shift 2
       ;;
     --disable-clipboard)
       CLIPBOARD=0
+      shift
+      ;;
+    --repair-sessions)
+      [[ $AGENT == codex ]] ||
+        die "--repair-sessions is only valid for Codex"
+      ((REPAIR_SESSIONS == 0)) ||
+        die "--repair-sessions may only be specified once"
+      REPAIR_SESSIONS=1
       shift
       ;;
     --official-subscription)
@@ -1212,12 +1268,39 @@ while (($#)); do
   esac
 done
 
+if ((REPAIR_SESSIONS)); then
+  if [[ -n $ISOLATED || ${BIND_SPECS[0]+set} == set ||
+        ${ENV_SPECS[0]+set} == set || ${NETWORKS[0]+set} == set ||
+        $DEFAULT_NETWORK_ENABLED == 0 || $HOST_DOCKER == 1 ||
+        $PAT_OPTION_SET == 1 || $CLIPBOARD == 0 ||
+        ${AGENT_ARGS[0]+set} == set ]]; then
+    die "--repair-sessions cannot be combined with agent runtime options or arguments"
+  fi
+fi
+
 if [[ -n $CLAUDE_PROFILE_NAME ]]; then
   validate_claude_profile_name
 fi
 
-command -v git >/dev/null 2>&1 || die "git is required"
 command -v "$DOCKER_BIN" >/dev/null 2>&1 || die "docker is required"
+
+if ((REPAIR_SESSIONS)); then
+  "$DOCKER_BIN" info >/dev/null 2>&1 ||
+    die "Docker daemon is unavailable"
+  prepare_selected_image
+  if ! "$DOCKER_BIN" run --rm --network none \
+      --entrypoint /usr/local/bin/container-codex-session-repair \
+      "$IMAGE" --check-capability >/dev/null 2>&1; then
+    die "image does not provide Codex session repair support: $IMAGE"
+  fi
+  DOCKER_ARGS=(run --rm --network none)
+  DOCKER_ARGS+=(--env "HOST_UID=$(id -u)" --env "HOST_GID=$(id -g)")
+  configure_codex_runtime
+  exec "$DOCKER_BIN" "${DOCKER_ARGS[@]}" "$IMAGE" \
+    container-codex-session-repair
+fi
+
+command -v git >/dev/null 2>&1 || die "git is required"
 
 if [[ -n $PAT_VALUE && -n $PAT_PATH ]]; then
   die "--pat and --pat-path are mutually exclusive"
@@ -1444,16 +1527,7 @@ if ((DEFAULT_NETWORK_ENABLED)); then
   fi
 fi
 
-if ((BUILD)); then
-  SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
-  [[ -f $SCRIPT_DIR/Dockerfile && -f $SCRIPT_DIR/container-entrypoint ]] ||
-    die "--build requires the docker-agent source checkout; run the repository copy"
-  "$DOCKER_BIN" buildx version >/dev/null 2>&1 || die_missing_buildx
-  "$DOCKER_BIN" build --tag "$IMAGE" "$SCRIPT_DIR"
-else
-  "$DOCKER_BIN" image inspect "$IMAGE" >/dev/null 2>&1 ||
-    die "image not found: $IMAGE (run with --build)"
-fi
+prepare_selected_image
 
 FINAL_ARGS=()
 "${AGENT_SLUG}_final_args"

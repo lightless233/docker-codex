@@ -7,12 +7,22 @@
 
 ## Codex 配置、记忆与认证
 
-宿主机完整的 `${CODEX_HOME:-$HOME/.codex}` 会以读写方式挂载到
-`/codex-home`，同时容器内设置：
+宿主机完整的 `${CODEX_HOME:-$HOME/.codex}` 会以读写方式挂载到容器内相同
+的逻辑绝对路径，同时容器内 `CODEX_HOME` 也使用这个路径。例如宿主使用
+`/home/lightless/.codex` 时，容器收到：
 
 ```text
-CODEX_HOME=/codex-home
+source=/home/lightless/.codex
+target=/home/lightless/.codex
+CODEX_HOME=/home/lightless/.codex
 ```
+
+如果宿主 `CODEX_HOME` 是符号链接，Docker source 使用解析后的物理目录，
+target 和 `CODEX_HOME` 仍保留宿主使用的逻辑路径。容器的
+`HOME=/home/codex` 不变，不会因此挂载整个宿主 home。
+
+同一个物理目录还会挂载到 `/codex-home`，但它只作为旧版 docker-codex
+写入的绝对 session 路径的兼容别名；新会话不会继续把这个别名写进状态数据库。
 
 因此宿主和容器可以共享：
 
@@ -24,7 +34,33 @@ CODEX_HOME=/codex-home
 
 宿主和容器中的多个 Codex 进程共享状态，其行为与宿主机上同时运行多个
 Codex 进程相同。升级状态格式时，建议让镜像内 Codex CLI 与宿主版本保持
-一致。
+接近；版本一致不能替代 session 路径修复。
+
+### 修复旧 session 路径
+
+旧版容器创建的 session 可能仍在状态数据库中引用
+`/codex-home/sessions/...`。先退出宿主和容器内所有 Codex 进程，再显式运行：
+
+```bash
+docker-codex --repair-sessions
+# 等价入口
+docker-agent codex --repair-sessions
+```
+
+修复命令使用镜像内工具，不要求宿主安装 `sqlite3` 或 `jq`。它取得有界的
+数据库写锁，先在当前 `CODEX_HOME/session-repair-backups` 下创建包含 WAL 已提交
+数据的一致性备份并打印完整路径，然后只迁移以下记录：rollout 路径使用历史
+前缀、文件仍位于当前 `sessions` 目录内且可读、JSON metadata 可解析、metadata
+中的 session ID 与数据库 row ID 一致。
+
+成功输出还会包含更新数和跳过数；缺失、越界、损坏或 ID 不匹配的记录只会跳过，
+不会删除 session 文件或数据库 row。重复运行是安全的，已经迁移的记录不会再次
+变化。普通 `docker-codex` 启动不会自动运行修复。
+
+若数据库被其他 Codex 进程持续锁定、schema 不受支持或完整性检查失败，命令会
+整体回滚并非零退出。工具不会清理已经发布的备份。未迁移的旧 session 仍可借助
+容器内 `/codex-home` 兼容别名尝试恢复；从备份还原数据库必须由用户在所有 Codex
+进程退出后显式完成。
 
 认证存在操作系统边界：
 

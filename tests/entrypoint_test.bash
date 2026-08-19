@@ -72,6 +72,9 @@ case $name in
     ;;
   gosu)
     shift
+    if [[ ${1:-} == test ]]; then
+      exit "${FAKE_CODEX_HOME_ACCESS_STATUS:-0}"
+    fi
     if [[ ${1:-} == codex && ${2:-} == login && ${3:-} == status ]]; then
       exit "${FAKE_LOGIN_STATUS:-0}"
     fi
@@ -111,7 +114,7 @@ esac
 exit 2
 EOF
   chmod +x "$fake_bin/fake-command"
-  for command in getent groupadd useradd usermod mkdir chown cp ln gosu setpriv codex claude kimi cursor-agent custom-command; do
+  for command in getent groupadd useradd usermod mkdir chown cp ln gosu setpriv codex claude kimi cursor-agent container-codex-session-repair custom-command; do
     ln -s fake-command "$fake_bin/$command"
   done
 }
@@ -144,7 +147,30 @@ test_missing_uid_and_gid_are_created_without_touching_shared_mounts() {
   assert_line "</home/codex>" "$log"
   assert_line "</codex-cache>" "$log"
   assert_no_line "<-R>" "$log"
-  assert_no_line "</codex-home>" "$log"
+  assert_contiguous_lines "$log" \
+    "<CALL:gosu>" "<12345:23456>" "<test>" "<-d>" "</codex-home>"
+}
+
+test_unwritable_codex_home_fails_before_codex_without_changing_permissions() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local fake_bin="$TEST_TMP/bin"
+  local log="$TEST_TMP/system.log"
+  local errors="$TEST_TMP/errors"
+  : >"$log"
+  make_fake_system_commands "$fake_bin"
+
+  if CODEX_HOME="$TEST_TMP/shared codex home" \
+      FAKE_CODEX_HOME_ACCESS_STATUS=1 \
+      run_entrypoint "$fake_bin" "$log" codex --version \
+      >"$errors" 2>&1; then
+    fail "unwritable Codex home unexpectedly started Codex"
+  fi
+
+  assert_contains "Codex home is not a readable and writable directory" "$errors"
+  assert_contains "$TEST_TMP/shared codex home" "$errors"
+  assert_no_line "<-R>" "$log"
+  assert_no_line "<CALL:codex>" "$log"
 }
 
 test_existing_gid_is_reused_and_existing_uid_skips_user_creation() {
@@ -828,6 +854,7 @@ test_cursor_key_is_not_exported_for_other_agents() {
 
 init_tests
 test_missing_uid_and_gid_are_created_without_touching_shared_mounts
+test_unwritable_codex_home_fails_before_codex_without_changing_permissions
 test_existing_gid_is_reused_and_existing_uid_skips_user_creation
 test_host_docker_gid_adds_runtime_user_to_socket_group
 test_login_failure_warns_but_still_runs_codex

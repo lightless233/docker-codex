@@ -85,6 +85,7 @@ docker-agent codex --isolated issue-123
 docker-agent claude --bind /path/to/fixtures:ro --profile deepseek
 docker-agent claude --env CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000 --profile deepseek
 docker-agent codex --pat-path ~/.local/share/docker-agent/pat/github-x
+docker-agent codex --repair-sessions
 docker run -d --name project-pg --network docker-agent -e POSTGRES_PASSWORD=change-me postgres:17
 docker-agent codex --network another-development-network
 docker-agent claude --host-docker --profile deepseek
@@ -141,6 +142,19 @@ Shared options:
 ```
 
 Arguments after `--` are passed unchanged to the selected agent.
+
+Codex-only maintenance option:
+
+```text
+--repair-sessions
+    Back up Codex's state database, migrate legacy /codex-home/sessions paths
+    whose files and session IDs validate to the host CODEX_HOME path, then
+    exit. It does not start Codex and never runs during a normal launch.
+```
+
+Exit host and container Codex processes before running the repair. See
+[Authentication and credentials](docs/en/credentials.md) for migration and
+failure-recovery semantics.
 
 Claude connection and profile options:
 

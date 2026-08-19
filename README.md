@@ -76,6 +76,7 @@ docker-agent codex --isolated issue-123
 docker-agent claude --bind /path/to/fixtures:ro --profile deepseek
 docker-agent claude --env CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000 --profile deepseek
 docker-agent codex --pat-path ~/.local/share/docker-agent/pat/github-x
+docker-agent codex --repair-sessions
 docker run -d --name project-pg --network docker-agent -e POSTGRES_PASSWORD=change-me postgres:17
 docker-agent codex --network another-development-network
 docker-agent claude --host-docker --profile deepseek
@@ -129,6 +130,18 @@ docker-agent cursor-agent -- -p "总结当前分支的改动" --output-format js
 ```
 
 `--` 后的参数不再由启动器解释，原样传给所选 agent。
+
+Codex 专用维护选项：
+
+```text
+--repair-sessions
+    备份 Codex 状态数据库，把经过文件和 session ID 校验的历史
+    /codex-home/sessions 路径迁移为宿主 CODEX_HOME 路径，然后退出。
+    不启动 Codex，也不会在普通启动时自动执行。
+```
+
+运行修复前应退出宿主和容器中的 Codex 进程。完整迁移与失败恢复语义见
+[认证与凭证](docs/zh/credentials.md)。
 
 Claude 连接与 profile 选项：
 

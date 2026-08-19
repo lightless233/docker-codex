@@ -6,8 +6,9 @@ evaluating whether this tool is safe to use with a given project.
 
 The container starts as root only long enough to initialize its private home and
 cache directory, then uses `gosu` to run the selected agent as the host numeric UID/GID. It
-does not recursively change ownership of the checkout, Git metadata, or Codex
-home. This keeps ordinary bind-mount writes owned by the host user.
+does not recursively change ownership of the checkout, Git metadata, or the
+shared Codex home (including its `/codex-home` compatibility alias). This keeps
+ordinary bind-mount writes owned by the host user.
 
 The runtime user has passwordless sudo inside the container and may obtain
 container root when needed. It is not added to the root group.
@@ -17,8 +18,10 @@ Codex always receives `--yolo`; Claude always receives
 so every read-write mount is fully exposed. In the default mode, Docker remains
 the outer isolation boundary; the launcher does not use `--privileged`.
 
-Codex receives the complete host Codex home. Claude does not receive the
-complete `~/.claude`: subscription mode mounts one `.credentials.json`, while
+Codex receives the complete host Codex home at the same logical absolute path
+used by the host. A second mount of the same physical directory at
+`/codex-home` only resolves legacy session paths and exposes no additional
+data. Claude does not receive the complete `~/.claude`: subscription mode mounts one `.credentials.json`, while
 API/custom modes mount only the selected profile and use state under the
 separate data root. The selected container can read profile secrets and can
 read/write the OAuth file so Claude may refresh it. See

@@ -32,14 +32,19 @@ agent 容器随后可以通过 `project-pg:5432` 访问 PostgreSQL。使用可�
 在 WSL2 中，构建性能敏感的项目建议存放在 Linux 文件系统内，而不是
 `/mnt/c`。
 
+Codex home 的主挂载 target 与宿主逻辑绝对路径相同；若 `CODEX_HOME` 是符号
+链接，Docker source 使用它的物理目标。两者都必须能被 Docker daemon 共享，
+否则启动器会失败而不会退回 `/codex-home`。
+
 Linux/WSL 可以通过 `--official-subscription` 单文件挂载宿主 Claude Code
 的 `.credentials.json`。具体权限和路径见 [Claude Code 集成](claude.md)。
 
 ## macOS
 
-Docker Desktop 必须允许共享 checkout、外部 Git metadata、Codex home
+Docker Desktop 必须允许共享 checkout、外部 Git metadata、Codex home 的物理目录
 以及所有 `--bind` 源目录。默认情况下，`/Users` 下的路径通常已经包含在
-Docker Desktop 的文件共享设置中。
+Docker Desktop 的文件共享设置中；若 `CODEX_HOME` 符号链接到 `/Volumes` 等
+其他位置，还必须共享其物理目标。
 
 入口脚本能够处理 macOS 常见的 UID 501/GID 20，不假设对应组名一定未被
 Debian 占用。宿主机 Keychain 中的 Codex 或 Claude 凭据仍然无法进入
