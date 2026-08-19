@@ -160,6 +160,8 @@ test_existing_gid_is_reused_and_existing_uid_skips_user_creation() {
 
   assert_no_line "<CALL:groupadd>" "$log"
   assert_line "<CALL:useradd>" "$log"
+  assert_contiguous_lines "$log" \
+    "<CALL:useradd>" "<-K>" "<UID_MIN=0>" "<--uid>" "<501>"
   assert_no_line "<login>" "$log"
 
   : >"$log"
@@ -475,6 +477,7 @@ test_claude_profile_connection_contract_and_file_metadata_are_enforced() {
   local profile="$TEST_TMP/official-api.env"
   local link="$TEST_TMP/profile-link.env"
   local errors="$TEST_TMP/errors"
+  local profile_was_root_owned=0
   : >"$log"
   make_fake_system_commands "$fake_bin"
 
@@ -528,6 +531,13 @@ test_claude_profile_connection_contract_and_file_metadata_are_enforced() {
   fi
   assert_contains "must not use a profile file" "$errors"
 
+  # The Bash 3.2 compatibility suite itself runs as root, which is now a valid
+  # translated bind-mount owner. Give this negative case a third UID so it
+  # remains neither HOST_UID nor the accepted root translation.
+  if [[ $(id -u) == 0 ]]; then
+    chown 12345 "$profile"
+    profile_was_root_owned=1
+  fi
   if DOCKER_AGENT_CLAUDE_CONNECTION=official-api \
     DOCKER_AGENT_CLAUDE_PROFILE_FILE=$profile \
     HOST_UID=99999 HOST_GID=$(id -g) \
@@ -536,6 +546,7 @@ test_claude_profile_connection_contract_and_file_metadata_are_enforced() {
     fail "Claude profile with an unexpected owner identity succeeded"
   fi
   assert_contains "Claude profile has unexpected owner" "$errors"
+  ((profile_was_root_owned == 0)) || chown 0 "$profile"
 
   chmod 640 "$profile"
   if DOCKER_AGENT_CLAUDE_CONNECTION=official-api \

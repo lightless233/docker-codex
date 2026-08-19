@@ -117,6 +117,60 @@ test_python_and_archive_tools_are_available() {
   '
 }
 
+test_macos_uid_is_created_without_range_warning() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local output="$TEST_TMP/output"
+
+  "$DOCKER_BIN" run --rm \
+    --env HOST_UID=502 \
+    --env HOST_GID=20 \
+    "$IMAGE" true >"$output" 2>&1
+
+  assert_not_contains "outside of the UID_MIN" "$output"
+}
+
+test_root_mapped_claude_profile_is_accepted() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local probe_dir="$TEST_TMP/probe"
+  install -d -m 755 "$probe_dir"
+
+  # shellcheck disable=SC2016 # Variables expand when the container runs the probe.
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    '[[ $(id -u) == 502 ]]' \
+    '[[ $(id -g) == 20 ]]' \
+    '[[ $ANTHROPIC_BASE_URL == https://example.invalid/anthropic ]]' \
+    '[[ $ANTHROPIC_AUTH_TOKEN == root-mapped-test-token ]]' \
+    >"$probe_dir/claude"
+  chmod 0755 "$probe_dir/claude"
+
+  # OrbStack and other macOS Docker backends can expose a host-owned bind
+  # mount as root:root inside their Linux VM. Create the same metadata in the
+  # container while keeping the profile mode locked to 0600.
+  # shellcheck disable=SC2016 # Variables expand inside the container.
+  "$DOCKER_BIN" run --rm \
+    --entrypoint bash \
+    --mount "type=bind,source=$probe_dir,target=/probe,readonly" \
+    "$IMAGE" -lc '
+      set -euo pipefail
+      profile=/tmp/root-mapped-profile.env
+      printf "%s\n" \
+        "ANTHROPIC_BASE_URL=https://example.invalid/anthropic" \
+        "ANTHROPIC_AUTH_TOKEN=root-mapped-test-token" >"$profile"
+      chmod 0600 "$profile"
+      [[ $(stat -c %u "$profile") == 0 ]]
+      HOST_UID=502 \
+      HOST_GID=20 \
+      DOCKER_AGENT_CLAUDE_CONNECTION=profile:root-mapped \
+      DOCKER_AGENT_CLAUDE_PROFILE_FILE="$profile" \
+      PATH=/probe:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+        exec /usr/local/bin/container-entrypoint claude
+    '
+}
+
 test_runtime_user_keeps_host_docker_supplementary_group() {
   # This catches credential switches that preserve UID/GID but discard the
   # supplementary group needed to open the mounted Docker socket.
@@ -707,6 +761,8 @@ init_tests
 test_debian_and_official_node_runtime
 test_docker_client_tools_are_available_without_a_daemon
 test_runtime_user_has_passwordless_sudo_without_root_group
+test_macos_uid_is_created_without_range_warning
+test_root_mapped_claude_profile_is_accepted
 test_runtime_user_keeps_host_docker_supplementary_group
 test_login_shell_keeps_toolchain_on_path
 test_go_toolchain_and_cache_are_available

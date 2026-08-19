@@ -32,7 +32,7 @@ normalize_claude_profile_value() {
 
 load_claude_profile() {
   local file=$1 kind=$2
-  local line key value assignment
+  local line key value assignment file_uid
   local seen_keys=() assignments=()
   local has_base=0 has_auth_token=0 has_api_key=0
   local override_keys=${DOCKER_AGENT_ENV_OVERRIDE_KEYS:-}
@@ -46,7 +46,12 @@ load_claude_profile() {
       "$file" >&2
     return 1
   }
-  [[ $(stat -c %u "$file") == "$HOST_UID" ]] || {
+  file_uid=$(stat -c %u "$file")
+  # Docker Desktop, OrbStack, Colima, and rootless Docker can expose a file
+  # owned by the invoking host user as root-owned inside the Linux VM. The
+  # launcher already validates the source owner before creating this read-only
+  # mount, so accept either faithful UID preservation or the root translation.
+  [[ $file_uid == "$HOST_UID" || $file_uid == 0 ]] || {
     printf 'docker-agent: Claude profile has unexpected owner: %s\n' "$file" >&2
     return 1
   }
@@ -140,7 +145,7 @@ if passwd_entry=$(getent passwd "$HOST_UID"); then
     usermod --home "$RUNTIME_HOME" --append --groups sudo "$RUNTIME_USER"
   fi
 else
-  useradd --uid "$HOST_UID" --gid "$HOST_GID" --groups sudo \
+  useradd -K UID_MIN=0 --uid "$HOST_UID" --gid "$HOST_GID" --groups sudo \
     --home-dir "$RUNTIME_HOME" --no-create-home --shell /bin/bash docker-codex
   RUNTIME_USER=docker-codex
 fi
