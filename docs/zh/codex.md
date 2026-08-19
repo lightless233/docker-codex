@@ -12,6 +12,10 @@ docker-agent 托管 profile 位于：
 ${DOCKER_AGENT_CONFIG_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/docker-agent}/codex/profiles/<name>.config.toml
 ```
 
+该路径是一个稳定的管理链接，真实文件位于每个 profile 独立的
+`codex/profiles/<name>/config.toml`。独立目录使 Codex 可以原子更新配置，
+而容器仍只能看到当前选中的 profile。
+
 创建器同时在 Codex 原生位置建立一个指向托管文件的兼容链接：
 
 ```text
@@ -44,12 +48,15 @@ codex --profile deepseek
 
 没有 `--profile` 时，启动器保持原有行为，Codex 继续使用
 `$CODEX_HOME/config.toml` 和现有认证。可以同时保存任意多个
-`<name>.config.toml`，每次启动只选择一个。容器只读挂载当前选择的托管文件；
-其他兼容链接在容器内没有可达的目标。
+`<name>.config.toml`，每次启动只选择一个。容器以读写方式挂载当前 profile
+的独立目录，以便 Codex 持久化 `projects.<path>.trust_level` 等交互设置；
+其他兼容链接在容器内没有可达的目标。旧版的平铺托管文件会在首次
+启动时自动迁移到独立目录，原路径保留为链接。
 
 profile 名称必须以字母或数字开头，后续只能使用字母、数字、点、下划线和
-连字符。`--profile` 会拒绝缺失、符号链接、目录、非当前用户所有、权限不是
-精确 `0600`，或位于当前 checkout/`CODEX_HOME` 内的托管文件。原生位置必须
+连字符。`--profile` 会拒绝缺失或指向错误的管理链接、不安全的 profile
+目录、非当前用户所有、权限不是精确 `0600` 的真实文件，或位于当前
+checkout/`CODEX_HOME` 内的托管文件。原生位置必须
 是指向对应托管文件的兼容链接；缺失时启动器会安全创建，存在冲突或指向其他
 文件时则拒绝启动。
 
@@ -125,13 +132,17 @@ supports_websockets = true
 截图中的顶层 `disable_response_storage` 或 `network_access = "enabled"`；不要把
 它们放入需要通过 `--strict-config` 校验的 0.148.0 profile。
 
+`features.codex_hooks` 也已弃用，应改为 `features.hooks`。启动器会对
+普通托管 profile 中的该旧键做一次保持布尔值的原子迁移。如果手写
+profile 包含 TOML 多行字符串，启动器会为避免误改而提示手动迁移。
+
 ## 安全边界与删除
 
 profile 内含明文 API key。不要把它提交到 Git、发送给他人或存放在 checkout。
-启动器不会把 key 内容放入 `docker run` 参数，只把当前托管文件只读挂载到
-容器；未选择的托管 profile 不会被挂载。Codex 以 `--yolo` 运行，因此选中的
-容器进程与它执行的命令仍能读取当前文件。只使用权限最小、可撤销、有有效期
-的 key。
+启动器不会把 key 内容放入 `docker run` 参数，也不会挂载未选择的托管
+profile。为了允许 Codex 保存 trust 与其他交互配置，当前 profile 对容器
+可读写；Codex 及它执行的命令可以读取、修改或删除它。只使用权限最小、
+可撤销、有有效期的 key，并在需要时备份 profile。
 
 删除一个 profile 时使用精确文件名：
 
@@ -140,10 +151,12 @@ config_root=${DOCKER_AGENT_CONFIG_HOME:-${XDG_CONFIG_HOME:-"$HOME/.config"}/dock
 codex_home=${CODEX_HOME:-"$HOME/.codex"}
 rm -- "$codex_home/deepseek.config.toml"
 rm -- "$config_root/codex/profiles/deepseek.config.toml"
+rm -r -- "$config_root/codex/profiles/deepseek"
 ```
 
-先删除兼容链接，再删除托管文件。删除 profile 不会删除已有 session。若原生
-位置是普通文件而不是链接，则它是旧式 profile；确认内容后只删除该普通文件。
+先删除两个兼容链接，再删除该 profile 的独立目录。删除 profile 不会
+删除已有 session。若原生位置是普通文件而不是链接，则它是旧式
+profile；确认内容后只删除该普通文件。
 
 ---
 

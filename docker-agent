@@ -799,9 +799,9 @@ create_claude_profile() {
 
 create_codex_profile() {
   local input_fd=0 output_fd=1
-  local profile_path compat_path provider_id checkout_root
-  local profile_name endpoint model api_key temp_file=
-  local created_profile='' created_link=''
+  local profile_dir profile_path profile_link compat_path provider_id checkout_root
+  local profile_name endpoint model api_key temp_dir='' temp_file=
+  local created_profile_dir='' created_profile_link='' created_compat_link=''
   local quoted_profile quoted_provider quoted_endpoint quoted_model quoted_key
 
   if [[ ! -t $input_fd || ! -t $output_fd ]]; then
@@ -824,10 +824,13 @@ create_codex_profile() {
   validate_codex_profile_name
 
   resolve_codex_profile_root
-  profile_path="$CODEX_PROFILE_ROOT/$CODEX_PROFILE_NAME.config.toml"
+  profile_dir="$CODEX_PROFILE_ROOT/$CODEX_PROFILE_NAME"
+  profile_path="$profile_dir/config.toml"
+  profile_link="$CODEX_PROFILE_ROOT/$CODEX_PROFILE_NAME.config.toml"
   compat_path="$CODEX_HOME_LOGICAL/$CODEX_PROFILE_NAME.config.toml"
-  if [[ -e $profile_path || -L $profile_path ]]; then
-    die "Codex profile already exists: $profile_path"
+  if [[ -e $profile_dir || -L $profile_dir ||
+        -e $profile_link || -L $profile_link ]]; then
+    die "Codex profile already exists: $profile_link"
   fi
   if [[ -e $compat_path || -L $compat_path ]]; then
     die "native Codex profile path already exists: $compat_path"
@@ -861,12 +864,15 @@ create_codex_profile() {
   quoted_key=$(toml_basic_string "$api_key") ||
     die "API key contains unsupported control characters"
 
-  temp_file=$(mktemp "$CODEX_PROFILE_ROOT/.docker-agent-codex-profile.XXXXXX") ||
-    die "unable to create temporary Codex profile"
-  chmod 600 "$temp_file"
-  trap '[[ -z ${created_link:-} ]] || rm -f "$created_link"
-        [[ -z ${created_profile:-} ]] || rm -f "$created_profile"
-        [[ -z ${temp_file:-} ]] || rm -f "$temp_file"' EXIT
+  temp_dir=$(mktemp -d "$CODEX_PROFILE_ROOT/.docker-agent-codex-profile.XXXXXX") ||
+    die "unable to create temporary Codex profile directory"
+  chmod 700 "$temp_dir"
+  temp_file=$temp_dir/config.toml
+  install -m 600 /dev/null "$temp_file"
+  trap '[[ -z ${created_compat_link:-} ]] || rm -f "$created_compat_link"
+        [[ -z ${created_profile_link:-} ]] || rm -f "$created_profile_link"
+        [[ -z ${created_profile_dir:-} ]] || rm -rf "$created_profile_dir"
+        [[ -z ${temp_dir:-} ]] || rm -rf "$temp_dir"' EXIT
   trap 'exit 130' HUP INT TERM
   printf '%s\n' \
     "model_provider = $quoted_provider" \
@@ -878,27 +884,36 @@ create_codex_profile() {
     "base_url = $quoted_endpoint" \
     'wire_api = "responses"' \
     "experimental_bearer_token = $quoted_key" >"$temp_file"
-  if ! ln "$temp_file" "$profile_path" 2>/dev/null; then
-    die "Codex profile already exists: $profile_path"
+  if ! mkdir -m 700 "$profile_dir" 2>/dev/null; then
+    die "Codex profile already exists: $profile_link"
   fi
-  created_profile=$profile_path
+  created_profile_dir=$profile_dir
+  mv "$temp_file" "$profile_path"
+  temp_file=
+  rmdir "$temp_dir"
+  temp_dir=
+  if ! ln -s "$profile_path" "$profile_link" 2>/dev/null; then
+    die "Codex profile already exists: $profile_link"
+  fi
+  created_profile_link=$profile_link
   if ! ln -s "$profile_path" "$compat_path" 2>/dev/null; then
     die "native Codex profile path already exists: $compat_path"
   fi
-  created_link=$compat_path
-  rm -f "$temp_file"
-  temp_file=
+  created_compat_link=$compat_path
   api_key=
   MASKED_PROFILE_VALUE=
   quoted_key=
 
   validate_owned_mode_600_file "$profile_path" "Codex profile"
+  [[ -L $profile_link && $(readlink "$profile_link") == "$profile_path" ]] ||
+    die "unable to create managed Codex profile link"
   [[ -L $compat_path && $(readlink "$compat_path") == "$profile_path" ]] ||
     die "unable to create native Codex profile compatibility link"
-  created_link=
-  created_profile=
+  created_compat_link=
+  created_profile_link=
+  created_profile_dir=
   trap - EXIT HUP INT TERM
-  printf 'Profile 已创建：%s\n' "$profile_path" >&"$output_fd"
+  printf 'Profile 已创建：%s\n' "$profile_link" >&"$output_fd"
   printf '启动：docker-codex --profile %s\n' \
     "$CODEX_PROFILE_NAME" >&"$output_fd"
 }
@@ -951,6 +966,17 @@ validate_owned_mode_600_file() {
     die "$label must have mode 600: $file"
 }
 
+validate_owned_mode_700_directory() {
+  local directory=$1 label=$2
+  [[ -e $directory ]] || die "$label does not exist: $directory"
+  [[ ! -L $directory ]] || die "$label must not be a symlink: $directory"
+  [[ -d $directory ]] || die "$label must be a directory: $directory"
+  [[ $(file_uid "$directory") == "$(id -u)" ]] ||
+    die "$label must be owned by the current user: $directory"
+  [[ $(file_mode "$directory") == 700 ]] ||
+    die "$label must have mode 700: $directory"
+}
+
 physical_symlink_target() {
   local link=$1 target target_dir
   target=$(readlink "$link") || return 1
@@ -963,13 +989,151 @@ physical_symlink_target() {
   printf '%s/%s\n' "$target_dir" "$(basename "$target")"
 }
 
-ensure_codex_native_profile_link() {
+replace_symlink() {
+  local link=$1 target=$2 label=$3
+  local temporary_link="$link.docker-agent-$$"
+
+  [[ ! -e $temporary_link && ! -L $temporary_link ]] ||
+    die "$label temporary path already exists: $temporary_link"
+  ln -s "$target" "$temporary_link" 2>/dev/null ||
+    die "unable to create $label: $link"
+  if ! mv -f "$temporary_link" "$link" 2>/dev/null; then
+    rm -f "$temporary_link"
+    die "unable to replace $label: $link"
+  fi
+}
+
+migrate_flat_managed_codex_profile() {
+  local profile_link=$1 profile_dir=$2 profile_path=$3
+  local temporary_profile="$profile_dir/.config.toml.docker-agent-$$"
+
+  validate_owned_mode_600_file "$profile_link" "Codex profile"
+  if [[ -e $profile_dir || -L $profile_dir ]]; then
+    validate_owned_mode_700_directory "$profile_dir" "Codex profile directory"
+    [[ -f $profile_path && ! -L $profile_path ]] ||
+      die "incomplete managed Codex profile migration: $profile_link"
+    cmp -s "$profile_link" "$profile_path" ||
+      die "conflicting managed Codex profile layouts: $profile_link"
+  else
+    install -d -m 700 "$profile_dir"
+    install -m 600 "$profile_link" "$temporary_profile"
+    mv "$temporary_profile" "$profile_path"
+  fi
+  replace_symlink "$profile_link" "$profile_path" "managed Codex profile link"
+  printf 'docker-codex: migrated managed profile layout: %s\n' \
+    "$profile_link" >&2
+}
+
+resolve_managed_codex_profile() {
+  local profile_link="$CODEX_PROFILE_ROOT/$CODEX_PROFILE_NAME.config.toml"
+  local profile_dir="$CODEX_PROFILE_ROOT/$CODEX_PROFILE_NAME"
+  local profile_path="$profile_dir/config.toml"
   local resolved_target
+
+  if [[ -f $profile_link && ! -L $profile_link ]]; then
+    migrate_flat_managed_codex_profile \
+      "$profile_link" "$profile_dir" "$profile_path"
+  elif [[ -e $profile_link && ! -L $profile_link ]]; then
+    die "Codex profile must be a regular file or managed link: $profile_link"
+  fi
+
+  if [[ ! -e $profile_link && ! -L $profile_link ]]; then
+    if [[ ! -e $profile_dir && ! -L $profile_dir ]]; then
+      return 1
+    fi
+    validate_owned_mode_700_directory "$profile_dir" "Codex profile directory"
+    validate_owned_mode_600_file "$profile_path" "Codex profile"
+    replace_symlink "$profile_link" "$profile_path" "managed Codex profile link"
+  fi
+
+  [[ -L $profile_link ]] ||
+    die "managed Codex profile path must be a symlink: $profile_link"
+  [[ $(file_uid "$profile_link") == "$(id -u)" ]] ||
+    die "managed Codex profile link must be owned by the current user: $profile_link"
+  resolved_target=$(physical_symlink_target "$profile_link") ||
+    die "managed Codex profile link target does not exist: $profile_link"
+  [[ $resolved_target == "$profile_path" ]] ||
+    die "managed Codex profile link points to a different file: $profile_link"
+  validate_owned_mode_700_directory "$profile_dir" "Codex profile directory"
+  validate_owned_mode_600_file "$profile_path" "Codex profile"
+
+  CODEX_PROFILE_PUBLIC_PATH=$profile_link
+  CODEX_PROFILE_DIR=$profile_dir
+  CODEX_PROFILE_PATH=$profile_path
+}
+
+migrate_codex_profile_deprecated_features() {
+  local feature_state has_legacy has_hooks temporary_profile
+
+  # Avoid interpreting apparent table headers inside TOML multiline strings.
+  # Managed profiles created by this launcher never need multiline strings;
+  # leave hand-written complex profiles untouched and let Codex report the
+  # deprecated key for manual migration.
+  if grep -Fq '"""' "$CODEX_PROFILE_PATH" ||
+     grep -Fq "'''" "$CODEX_PROFILE_PATH"; then
+    if grep -Fq 'codex_hooks' "$CODEX_PROFILE_PATH"; then
+      printf 'docker-codex: warning: replace features.codex_hooks with features.hooks manually in complex profile: %s\n' \
+        "$CODEX_PROFILE_PUBLIC_PATH" >&2
+    fi
+    return 0
+  fi
+
+  feature_state=$(awk '
+    /^[[:space:]]*\[[[:space:]]*features[[:space:]]*\][[:space:]]*(#.*)?$/ {
+      in_features = 1
+      next
+    }
+    /^[[:space:]]*\[/ { in_features = 0 }
+    in_features && /^[[:space:]]*codex_hooks[[:space:]]*=/ { legacy = 1 }
+    in_features && /^[[:space:]]*hooks[[:space:]]*=/ { modern = 1 }
+    !in_features && /^[[:space:]]*features[.]codex_hooks[[:space:]]*=/ { legacy = 1 }
+    !in_features && /^[[:space:]]*features[.]hooks[[:space:]]*=/ { modern = 1 }
+    END { printf "%d %d\n", legacy, modern }
+  ' "$CODEX_PROFILE_PATH") ||
+    die "unable to inspect Codex profile features: $CODEX_PROFILE_PUBLIC_PATH"
+  IFS=' ' read -r has_legacy has_hooks <<<"$feature_state"
+  [[ $has_legacy == 1 ]] || return 0
+
+  temporary_profile="$CODEX_PROFILE_DIR/.config.toml.docker-agent-$$"
+  install -m 600 /dev/null "$temporary_profile"
+  if ! awk -v has_hooks="$has_hooks" '
+      /^[[:space:]]*\[[[:space:]]*features[[:space:]]*\][[:space:]]*(#.*)?$/ {
+        in_features = 1
+        print
+        next
+      }
+      /^[[:space:]]*\[/ { in_features = 0 }
+      in_features && /^[[:space:]]*codex_hooks[[:space:]]*=/ {
+        if (!has_hooks) {
+          sub(/codex_hooks/, "hooks")
+          print
+        }
+        next
+      }
+      !in_features && /^[[:space:]]*features[.]codex_hooks[[:space:]]*=/ {
+        if (!has_hooks) {
+          sub(/features[.]codex_hooks/, "features.hooks")
+          print
+        }
+        next
+      }
+      { print }
+    ' "$CODEX_PROFILE_PATH" >"$temporary_profile"; then
+    rm -f "$temporary_profile"
+    die "unable to migrate Codex profile features: $CODEX_PROFILE_PUBLIC_PATH"
+  fi
+  mv "$temporary_profile" "$CODEX_PROFILE_PATH"
+  printf 'docker-codex: migrated features.codex_hooks to features.hooks: %s\n' \
+    "$CODEX_PROFILE_PUBLIC_PATH" >&2
+}
+
+ensure_codex_native_profile_link() {
+  local resolved_target direct_target
 
   if [[ ! -e $CODEX_PROFILE_COMPAT_PATH &&
         ! -L $CODEX_PROFILE_COMPAT_PATH ]]; then
-    ln -s "$CODEX_PROFILE_PATH" "$CODEX_PROFILE_COMPAT_PATH" 2>/dev/null ||
-      die "unable to create native Codex profile link: $CODEX_PROFILE_COMPAT_PATH"
+    replace_symlink "$CODEX_PROFILE_COMPAT_PATH" "$CODEX_PROFILE_PATH" \
+      "native Codex profile link"
   fi
   [[ -L $CODEX_PROFILE_COMPAT_PATH ]] ||
     die "native Codex profile path conflicts with managed profile: $CODEX_PROFILE_COMPAT_PATH"
@@ -977,8 +1141,20 @@ ensure_codex_native_profile_link() {
     die "native Codex profile link must be owned by the current user: $CODEX_PROFILE_COMPAT_PATH"
   resolved_target=$(physical_symlink_target "$CODEX_PROFILE_COMPAT_PATH") ||
     die "native Codex profile link target does not exist: $CODEX_PROFILE_COMPAT_PATH"
+  if [[ $resolved_target != "$CODEX_PROFILE_PATH" ]]; then
+    if [[ ! -L $resolved_target ]]; then
+      die "native Codex profile link points to a different file: $CODEX_PROFILE_COMPAT_PATH"
+    fi
+    resolved_target=$(physical_symlink_target "$resolved_target") ||
+      die "native Codex profile link points to a different file: $CODEX_PROFILE_COMPAT_PATH"
+  fi
   [[ $resolved_target == "$CODEX_PROFILE_PATH" ]] ||
     die "native Codex profile link points to a different file: $CODEX_PROFILE_COMPAT_PATH"
+  direct_target=$(readlink "$CODEX_PROFILE_COMPAT_PATH")
+  if [[ $direct_target != "$CODEX_PROFILE_PATH" ]]; then
+    replace_symlink "$CODEX_PROFILE_COMPAT_PATH" "$CODEX_PROFILE_PATH" \
+      "native Codex profile link"
+  fi
 }
 
 resolve_claude_credential_source() {
@@ -1078,20 +1254,18 @@ run_agent_hook() {
 }
 
 resolve_codex_launch() {
-  local profile_dir managed_profile legacy_profile
+  local profile_dir legacy_profile
   [[ -n $CODEX_PROFILE_NAME ]] || return 0
 
   resolve_codex_home
   resolve_codex_profile_root
   profile_dir=$(cd "$CODEX_HOME_LOGICAL" && pwd -P)
-  managed_profile="$CODEX_PROFILE_ROOT/$CODEX_PROFILE_NAME.config.toml"
   legacy_profile="$profile_dir/$CODEX_PROFILE_NAME.config.toml"
   CODEX_PROFILE_COMPAT_PATH="$CODEX_HOME_LOGICAL/$CODEX_PROFILE_NAME.config.toml"
 
-  if [[ -e $managed_profile || -L $managed_profile ]]; then
-    CODEX_PROFILE_PATH=$managed_profile
-    validate_owned_mode_600_file "$CODEX_PROFILE_PATH" "Codex profile"
+  if resolve_managed_codex_profile; then
     ensure_codex_native_profile_link
+    migrate_codex_profile_deprecated_features
     CODEX_PROFILE_MANAGED=1
   else
     CODEX_PROFILE_PATH=$legacy_profile
@@ -1153,8 +1327,8 @@ configure_codex_runtime() {
     DOCKER_ARGS+=(--mount "type=bind,source=$CODEX_HOME_PHYSICAL,target=/codex-home")
   fi
   if ((CODEX_PROFILE_MANAGED)); then
-    reject_mount_comma "$CODEX_PROFILE_PATH"
-    DOCKER_ARGS+=(--mount "type=bind,source=$CODEX_PROFILE_PATH,target=$CODEX_PROFILE_PATH,readonly")
+    reject_mount_comma "$CODEX_PROFILE_DIR"
+    DOCKER_ARGS+=(--mount "type=bind,source=$CODEX_PROFILE_DIR,target=$CODEX_PROFILE_DIR")
   fi
 }
 
@@ -1519,6 +1693,8 @@ PAT_PATH=${DOCKER_AGENT_PAT_PATH:-${DOCKER_CODEX_PAT_PATH:-}}
 PAT_OPTION_SET=0
 CODEX_PROFILE_NAME=
 CODEX_PROFILE_PATH=
+CODEX_PROFILE_DIR=
+CODEX_PROFILE_PUBLIC_PATH=
 CODEX_PROFILE_ROOT=
 CODEX_PROFILE_COMPAT_PATH=
 CODEX_PROFILE_MANAGED=0

@@ -22,10 +22,11 @@ Codex receives the complete host Codex home at the same logical absolute path
 used by the host. A second mount of the same physical directory at
 `/codex-home` only resolves legacy session paths and exposes no additional
 data. Managed Codex endpoint profiles live outside this directory; only native
-compatibility links live in `CODEX_HOME`. The launcher mounts the selected
-profile read-only at its link target, leaving other managed profiles
-unreachable in the container. Codex and commands it runs can still read the
-selected plaintext bearer token. Legacy `$CODEX_HOME/*.config.toml` files are
+compatibility links live in `CODEX_HOME`. The launcher mounts only the selected
+profile's directory read-write so Codex can atomically persist trust and other
+interactive config; other managed profiles remain unreachable in the
+container. Codex and commands it runs can read or modify the selected plaintext
+bearer token. Legacy `$CODEX_HOME/*.config.toml` files are
 exposed with the complete directory. Use minimally scoped, revocable keys. See
 [Codex custom endpoint profiles](codex.md). Claude does not receive the complete `~/.claude`: subscription mode mounts one `.credentials.json`, while
 API/custom modes mount only the selected profile and use state under the

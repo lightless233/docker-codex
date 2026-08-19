@@ -295,12 +295,14 @@ test_codex_accepts_one_file_native_provider_profile() {
   local TEST_TMP
   TEST_TMP=$(new_tmp)
   local codex_home="$TEST_TMP/codex-home"
-  local profile_dir="$TEST_TMP/agent-config/codex/profiles"
-  local profile="$profile_dir/relay.config.toml"
-  local other_profile="$profile_dir/other.config.toml"
+  local profile_root="$TEST_TMP/agent-config/codex/profiles"
+  local profile_dir="$profile_root/relay"
+  local profile="$profile_dir/config.toml"
+  local other_profile_dir="$profile_root/other"
+  local other_profile="$other_profile_dir/config.toml"
   local output="$TEST_TMP/output"
   install -d -m 700 "$codex_home"
-  install -d -m 700 "$profile_dir"
+  install -d -m 700 "$profile_dir" "$other_profile_dir"
   install -m 600 /dev/null "$profile"
   printf '%s\n' \
     'model_provider = "docker-agent-relay"' \
@@ -321,20 +323,28 @@ test_codex_accepts_one_file_native_provider_profile() {
   ln -s "$profile" "$codex_home/relay.config.toml"
   ln -s "$other_profile" "$codex_home/other.config.toml"
 
+  # shellcheck disable=SC2016 # Variables expand inside the container.
   "$DOCKER_BIN" run --rm --network none \
     --user "$(id -u):$(id -g)" \
+    --env TEST_CODEX_PROFILE_DIR="$profile_dir" \
+    --env TEST_CODEX_PROFILE_PATH="$profile" \
     --mount "type=bind,source=$codex_home,target=/codex-profile-test" \
-    --mount "type=bind,source=$profile,target=$profile,readonly" \
+    --mount "type=bind,source=$profile_dir,target=$profile_dir" \
     --entrypoint bash \
     "$IMAGE" -lc \
     '[[ -r /codex-profile-test/relay.config.toml ]] &&
-     [[ ! -e /codex-profile-test/other.config.toml ]]'
+     [[ ! -e /codex-profile-test/other.config.toml ]] &&
+     temporary_profile=$TEST_CODEX_PROFILE_DIR/.config.toml.test &&
+     cp "$TEST_CODEX_PROFILE_PATH" "$temporary_profile" &&
+     printf "\n[projects.\"/workspace\"]\ntrust_level = \"trusted\"\n" >>"$temporary_profile" &&
+     mv "$temporary_profile" "$TEST_CODEX_PROFILE_PATH" &&
+     grep -Fx "trust_level = \"trusted\"" "$TEST_CODEX_PROFILE_PATH" >/dev/null'
 
   if "$DOCKER_BIN" run --rm --network none \
       --user "$(id -u):$(id -g)" \
       --env CODEX_HOME=/codex-profile-test \
       --mount "type=bind,source=$codex_home,target=/codex-profile-test" \
-      --mount "type=bind,source=$profile,target=$profile,readonly" \
+      --mount "type=bind,source=$profile_dir,target=$profile_dir" \
       --entrypoint codex \
       "$IMAGE" \
       --strict-config --profile relay \

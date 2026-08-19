@@ -13,6 +13,11 @@ docker-agent managed profiles live at:
 ${DOCKER_AGENT_CONFIG_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/docker-agent}/codex/profiles/<name>.config.toml
 ```
 
+That stable management path is a symlink. The real file lives in the
+per-profile `codex/profiles/<name>/config.toml` directory. The separate
+directory lets Codex replace its config atomically while the container still
+sees only the selected profile.
+
 The creator also adds a compatibility link at Codex's native location:
 
 ```text
@@ -47,13 +52,17 @@ codex --profile deepseek
 Without `--profile`, the launcher preserves its existing behavior and Codex
 uses the normal `config.toml` and authentication state. Keep as many
 `<name>.config.toml` files as needed; one is selected per launch. The container
-gets a read-only mount of only the selected managed file; other compatibility
-links have no reachable target inside the container.
+gets a read-write mount of only that profile's directory so Codex can persist
+interactive settings such as `projects.<path>.trust_level`; other compatibility
+links have no reachable target inside the container. The first launch migrates
+an older flat managed file into its own directory and leaves a link at the old
+path.
 
 Names must start with a letter or digit and may then contain letters, digits,
-dots, underscores, and hyphens. `--profile` rejects a missing file, symlink,
-directory, file not owned by the invoking user, mode other than exactly
-`0600`, or a managed file inside the current checkout or `CODEX_HOME`. The
+dots, underscores, and hyphens. `--profile` rejects a missing or misdirected
+management link, an unsafe profile directory, a real file not owned by the
+invoking user or with a mode other than exactly `0600`, or a managed file
+inside the current checkout or `CODEX_HOME`. The
 native path must be a compatibility link to the matching managed file. The
 launcher safely creates a missing link but rejects conflicts and links to a
 different target.
@@ -136,14 +145,20 @@ official schema also does not list the screenshot's top-level
 `disable_response_storage` or `network_access = "enabled"`; omit them from a
 0.148.0 profile that must pass `--strict-config`.
 
+`features.codex_hooks` is also deprecated; use `features.hooks`. The launcher
+atomically migrates that old key in ordinary managed profiles while preserving
+its Boolean value. For a hand-written profile containing TOML multiline
+strings, it asks for a manual migration rather than risk changing string
+contents.
+
 ## Security boundary and deletion
 
 The profile contains a plaintext API key. Never commit it, send it to another
 person, or store it in a checkout. The launcher does not put the key contents
-in `docker run` arguments and mounts only the selected managed file read-only;
-unselected managed profiles are not mounted. Codex runs with `--yolo`, so the
-selected container process and commands it runs can still read the current
-file. Use minimally scoped, revocable, expiring keys.
+in `docker run` arguments, and unselected managed profiles are not mounted. To
+let Codex save trust and other interactive config, the selected profile is
+read-write: Codex and commands it runs can read, modify, or delete it. Use
+minimally scoped, revocable, expiring keys and back up profiles when needed.
 
 Delete one profile by its exact filename:
 
@@ -152,11 +167,13 @@ config_root=${DOCKER_AGENT_CONFIG_HOME:-${XDG_CONFIG_HOME:-"$HOME/.config"}/dock
 codex_home=${CODEX_HOME:-"$HOME/.codex"}
 rm -- "$codex_home/deepseek.config.toml"
 rm -- "$config_root/codex/profiles/deepseek.config.toml"
+rm -r -- "$config_root/codex/profiles/deepseek"
 ```
 
-Remove the compatibility link first, then the managed file. Deleting a profile
-does not delete saved sessions. When the native path is a regular file instead
-of a link, it is a legacy profile; inspect it and remove only that regular file.
+Remove both compatibility links first, then that profile's directory. Deleting
+a profile does not delete saved sessions. When the native path is a regular
+file instead of a link, it is a legacy profile; inspect it and remove only that
+regular file.
 
 ---
 

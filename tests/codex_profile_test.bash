@@ -9,9 +9,13 @@ write_codex_profile() {
   local name=$1
   shift
   install -d -m 700 "$TEST_AGENT_CONFIG_HOME/codex/profiles"
-  CODEX_PROFILE_PATH="$TEST_AGENT_CONFIG_HOME/codex/profiles/$name.config.toml"
+  CODEX_PROFILE_DIR="$TEST_AGENT_CONFIG_HOME/codex/profiles/$name"
+  install -d -m 700 "$CODEX_PROFILE_DIR"
+  CODEX_PROFILE_PATH="$CODEX_PROFILE_DIR/config.toml"
   printf '%s\n' "$@" >"$CODEX_PROFILE_PATH"
   chmod 600 "$CODEX_PROFILE_PATH"
+  ln -s "$CODEX_PROFILE_PATH" \
+    "$TEST_AGENT_CONFIG_HOME/codex/profiles/$name.config.toml"
 }
 
 run_codex_launcher() {
@@ -90,10 +94,11 @@ test_profile_creator_writes_one_protected_managed_profile() {
   local outside="$TEST_TMP/not a repository"
   local input="$TEST_TMP/input"
   local output="$TEST_TMP/output"
-  local profile compat_profile
+  local profile profile_link compat_profile
   mkdir -p "$outside"
   prepare_fake_runtime "$TEST_TMP"
-  profile="$TEST_AGENT_CONFIG_HOME/codex/profiles/deepseek.config.toml"
+  profile="$TEST_AGENT_CONFIG_HOME/codex/profiles/deepseek/config.toml"
+  profile_link="$TEST_AGENT_CONFIG_HOME/codex/profiles/deepseek.config.toml"
   compat_profile="$TEST_CODEX_HOME/deepseek.config.toml"
   printf '%s\n' \
     'deepseek' \
@@ -115,15 +120,19 @@ test_profile_creator_writes_one_protected_managed_profile() {
     'experimental_bearer_token = "secret-key"'
   [[ $(file_mode "$profile") == 600 ]] ||
     fail "created Codex profile does not have mode 600"
+  [[ $(file_mode "$(dirname "$profile")") == 700 ]] ||
+    fail "created per-profile Codex directory does not have mode 700"
   [[ $(file_mode "$TEST_AGENT_CONFIG_HOME/codex/profiles") == 700 ]] ||
     fail "created Codex profile directory does not have mode 700"
+  [[ -L $profile_link && $(readlink "$profile_link") == "$profile" ]] ||
+    fail "Codex creator did not create the managed profile link"
   [[ -L $compat_profile ]] ||
     fail "Codex creator did not create the native compatibility link"
   [[ $(readlink "$compat_profile") == "$profile" ]] ||
     fail "Codex native compatibility link has the wrong target"
   assert_contains 'API key: **********' "$output"
   assert_not_contains 'secret-key' "$output"
-  assert_contains "Profile 已创建：$profile" "$output"
+  assert_contains "Profile 已创建：$profile_link" "$output"
   assert_contains 'docker-codex --profile deepseek' "$output"
   [[ ! -e $TEST_CODEX_HOME/auth.json ]] ||
     fail "Codex profile creator unexpectedly created auth.json"
@@ -135,10 +144,11 @@ test_profile_creator_escapes_toml_strings_and_refuses_overwrite() {
   local outside="$TEST_TMP/outside"
   local input="$TEST_TMP/input"
   local output="$TEST_TMP/output"
-  local profile expected
+  local profile profile_link expected
   mkdir -p "$outside"
   prepare_fake_runtime "$TEST_TMP"
-  profile="$TEST_AGENT_CONFIG_HOME/codex/profiles/quoted.config.toml"
+  profile="$TEST_AGENT_CONFIG_HOME/codex/profiles/quoted/config.toml"
+  profile_link="$TEST_AGENT_CONFIG_HOME/codex/profiles/quoted.config.toml"
   printf '%s\n' \
     'quoted' \
     'https://relay.example.invalid/v1?label="test"' \
@@ -158,7 +168,7 @@ test_profile_creator_escapes_toml_strings_and_refuses_overwrite() {
   if run_profile_creator "$outside" "$input" "$output"; then
     fail "Codex profile creator unexpectedly overwrote an existing profile"
   fi
-  assert_contains "Codex profile already exists: $profile" "$output"
+  assert_contains "Codex profile already exists: $profile_link" "$output"
   cmp -s "$expected" "$profile" ||
     fail "existing Codex profile content was modified"
 }
@@ -216,7 +226,7 @@ test_selected_profile_is_validated_and_forwarded_without_secret_in_args() {
   local TEST_TMP
   TEST_TMP=$(new_tmp)
   local repo="$TEST_TMP/repo"
-  local selected_profile other_profile compat_profile
+  local selected_profile selected_profile_dir other_profile compat_profile
   make_repo "$repo"
   prepare_fake_runtime "$TEST_TMP"
   write_codex_profile relay \
@@ -227,6 +237,7 @@ test_selected_profile_is_validated_and_forwarded_without_secret_in_args() {
     'wire_api = "responses"' \
     'experimental_bearer_token = "profile-secret"'
   selected_profile=$CODEX_PROFILE_PATH
+  selected_profile_dir=$CODEX_PROFILE_DIR
   compat_profile="$TEST_CODEX_HOME/relay.config.toml"
   write_codex_profile other \
     'model = "other-model"' \
@@ -241,7 +252,7 @@ test_selected_profile_is_validated_and_forwarded_without_secret_in_args() {
     fail "Codex launcher created a compatibility link to the wrong profile"
   assert_line '<DOCKER_AGENT_CODEX_PROFILE=relay>' "$TEST_DOCKER_LOG"
   assert_line \
-    "<type=bind,source=$selected_profile,target=$selected_profile,readonly>" \
+    "<type=bind,source=$selected_profile_dir,target=$selected_profile_dir>" \
     "$TEST_DOCKER_LOG"
   assert_not_contains "$other_profile" "$TEST_DOCKER_LOG"
   assert_ordered_lines "$TEST_DOCKER_LOG" \
@@ -255,6 +266,54 @@ test_selected_profile_is_validated_and_forwarded_without_secret_in_args() {
     '<--version>'
   assert_not_contains 'profile-secret' "$TEST_DOCKER_LOG"
   assert_not_contains 'other-profile-secret' "$TEST_DOCKER_LOG"
+}
+
+test_selected_managed_profile_migrates_deprecated_hooks_feature() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  local flat_profile profile profile_dir compat_profile complex_profile errors
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+  install -d -m 700 "$TEST_AGENT_CONFIG_HOME/codex/profiles"
+  flat_profile="$TEST_AGENT_CONFIG_HOME/codex/profiles/legacy-hooks.config.toml"
+  profile_dir="$TEST_AGENT_CONFIG_HOME/codex/profiles/legacy-hooks"
+  profile="$profile_dir/config.toml"
+  compat_profile="$TEST_CODEX_HOME/legacy-hooks.config.toml"
+  printf '%s\n' \
+    'model = "gpt-5.4"' \
+    '' \
+    '[features]' \
+    'codex_hooks = true' >"$flat_profile"
+  chmod 600 "$flat_profile"
+  ln -s "$flat_profile" "$compat_profile"
+
+  run_codex_launcher "$repo" --profile legacy-hooks -- --version
+
+  [[ -d $profile_dir ]] || fail "flat managed Codex profile was not migrated"
+  [[ -L $flat_profile && $(readlink "$flat_profile") == "$profile" ]] ||
+    fail "flat managed Codex profile did not become a compatibility link"
+  [[ -L $compat_profile && $(readlink "$compat_profile") == "$profile" ]] ||
+    fail "native Codex profile link was not normalized after migration"
+  assert_line 'hooks = true' "$profile"
+  assert_not_contains 'codex_hooks' "$profile"
+  [[ $(file_mode "$profile") == 600 ]] ||
+    fail "migrated Codex profile does not have mode 600"
+
+  write_codex_profile complex \
+    'model = "gpt-5.4"' \
+    'developer_instructions = """' \
+    '[features]' \
+    'codex_hooks = true' \
+    '"""'
+  complex_profile=$CODEX_PROFILE_PATH
+  errors="$TEST_TMP/complex-errors"
+  run_codex_launcher "$repo" --profile complex -- --version \
+    >"$errors" 2>&1
+
+  assert_contains 'codex_hooks = true' "$complex_profile"
+  assert_contains 'replace features.codex_hooks with features.hooks manually' \
+    "$errors"
 }
 
 test_selected_profile_rejects_unsafe_names_files_and_checkout_location() {
@@ -291,7 +350,10 @@ test_selected_profile_rejects_unsafe_names_files_and_checkout_location() {
     'model = "gpt-5.4"' \
     'experimental_bearer_token = "secret"'
   real_profile=$CODEX_PROFILE_PATH
+  install -d -m 700 "$TEST_AGENT_CONFIG_HOME/codex/profiles/link"
   ln -s "$real_profile" \
+    "$TEST_AGENT_CONFIG_HOME/codex/profiles/link/config.toml"
+  ln -s "$TEST_AGENT_CONFIG_HOME/codex/profiles/link/config.toml" \
     "$TEST_AGENT_CONFIG_HOME/codex/profiles/link.config.toml"
   if run_codex_launcher "$repo" --profile link >"$errors" 2>&1; then
     fail "symlink Codex profile unexpectedly succeeded"
@@ -415,6 +477,7 @@ test_profile_creator_writes_one_protected_managed_profile
 test_profile_creator_escapes_toml_strings_and_refuses_overwrite
 test_profile_creator_requires_all_fields_and_a_real_tty
 test_selected_profile_is_validated_and_forwarded_without_secret_in_args
+test_selected_managed_profile_migrates_deprecated_hooks_feature
 test_selected_profile_rejects_unsafe_names_files_and_checkout_location
 test_legacy_native_profile_remains_supported_without_managed_mount
 test_codex_profile_options_are_documented_and_create_is_standalone
