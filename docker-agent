@@ -65,8 +65,7 @@ Options:
   --pat-path FILE         Mount a token file read-only at
                           /codex-credentials/pat (DOCKER_AGENT_PAT_PATH sets
                           the default; legacy DOCKER_CODEX_PAT_PATH also works)
-  --disable-clipboard     Do not forward the host clipboard (display sockets)
-                          into the container
+  --disable-clipboard     Do not forward the host clipboard into the container
   --profile NAME          Use a protected managed Codex profile, with legacy
                           $CODEX_HOME/NAME.config.toml fallback
   --create-profile        Interactively create a protected one-file endpoint
@@ -100,7 +99,7 @@ Options:
   --host-docker             Give the agent full control of the host Docker daemon
   --pat TOKEN               Provide a git access token directly
   --pat-path FILE           Mount a git access token file
-  --disable-clipboard       Do not forward host display sockets
+  --disable-clipboard       Do not forward the host clipboard
   --official-subscription   Reuse the supported host Claude OAuth credential
   --official-api            Use the official-api.env API key profile
   --profile NAME            Use a named custom endpoint profile
@@ -135,7 +134,7 @@ Options:
   --host-docker           Give the agent full control of the host Docker daemon
   --pat TOKEN             Provide a git access token directly
   --pat-path FILE         Mount a git access token file
-  --disable-clipboard     Do not forward host display sockets
+  --disable-clipboard     Do not forward the host clipboard
   --help, -h              Show this help
 
 The host Kimi Code data directory is shared with the container, so a login
@@ -168,7 +167,7 @@ Options:
   --host-docker           Give the agent full control of the host Docker daemon
   --pat TOKEN             Provide a git access token directly
   --pat-path FILE         Mount a git access token file
-  --disable-clipboard     Do not forward host display sockets
+  --disable-clipboard     Do not forward the host clipboard
   --help, -h              Show this help
 
 Authentication uses an API key read from a protected host file:
@@ -1334,6 +1333,171 @@ cursor_agent_final_args() {
   fi
 }
 
+run_macos_clipboard_monitor() {
+  local output_dir=$1
+  "$OSASCRIPT_BIN" -l JavaScript - "$output_dir" <<'JXA'
+ObjC.import("AppKit");
+ObjC.import("Foundation");
+
+function removeFileIfPresent(fileManager, path) {
+    if (fileManager.fileExistsAtPath($(path))) {
+        fileManager.removeItemAtPathError($(path), null);
+    }
+}
+
+function clipboardImage(pasteboard) {
+    var types = ["public.png", "public.tiff", "public.jpeg"];
+    var image = null;
+
+    for (var index = 0; index < types.length; index += 1) {
+        var data = pasteboard.dataForType($(types[index]));
+        if (data) {
+            image = $.NSImage.alloc.initWithData(data);
+            if (image) {
+                break;
+            }
+        }
+    }
+
+    if (!image) {
+        var files = pasteboard.propertyListForType($("NSFilenamesPboardType"));
+        if (files) {
+            var paths = ObjC.unwrap(files);
+            if (paths.length > 0) {
+                image = $.NSImage.alloc.initWithContentsOfFile($(paths[0]));
+            }
+        }
+    }
+
+    return image;
+}
+
+function writeCurrentImage(pasteboard, fileManager, outputPath) {
+    var image = clipboardImage(pasteboard);
+    if (!image) {
+        removeFileIfPresent(fileManager, outputPath);
+        return;
+    }
+
+    var tiff = image.TIFFRepresentation;
+    if (!tiff) {
+        removeFileIfPresent(fileManager, outputPath);
+        return;
+    }
+    var bitmap = $.NSBitmapImageRep.imageRepWithData(tiff);
+    if (!bitmap) {
+        removeFileIfPresent(fileManager, outputPath);
+        return;
+    }
+    var png = bitmap.representationUsingTypeProperties(
+        $.NSBitmapImageFileTypePNG,
+        $({})
+    );
+    if (!png || !png.writeToFileAtomically($(outputPath), true)) {
+        removeFileIfPresent(fileManager, outputPath);
+    }
+}
+
+function run(argv) {
+    var outputDir = argv[0];
+    var outputPath = outputDir + "/latest.png";
+    var readyPath = outputDir + "/.ready";
+    var pasteboard = $.NSPasteboard.generalPasteboard;
+    var fileManager = $.NSFileManager.defaultManager;
+    var lastChange = Number(pasteboard.changeCount);
+
+    writeCurrentImage(pasteboard, fileManager, outputPath);
+    $.NSData.data.writeToFileAtomically($(readyPath), true);
+
+    while (true) {
+        $.NSThread.sleepForTimeInterval(0.1);
+        var currentChange = Number(pasteboard.changeCount);
+        if (currentChange !== lastChange) {
+            lastChange = currentChange;
+            writeCurrentImage(pasteboard, fileManager, outputPath);
+        }
+    }
+}
+JXA
+}
+
+cleanup_macos_clipboard() {
+  local exit_status=$?
+  trap - EXIT
+  if [[ -n ${MACOS_CLIPBOARD_PID:-} ]]; then
+    kill "$MACOS_CLIPBOARD_PID" >/dev/null 2>&1 || true
+    wait "$MACOS_CLIPBOARD_PID" 2>/dev/null || true
+    MACOS_CLIPBOARD_PID=
+  fi
+  if [[ -n ${MACOS_CLIPBOARD_DIR:-} &&
+        -n ${MACOS_CLIPBOARD_ROOT:-} &&
+        $MACOS_CLIPBOARD_DIR == "$MACOS_CLIPBOARD_ROOT"/session.* ]]; then
+    rm -rf -- "$MACOS_CLIPBOARD_DIR"
+  fi
+  MACOS_CLIPBOARD_DIR=
+  return "$exit_status"
+}
+
+warn_macos_clipboard_unavailable() {
+  printf '%s\n' \
+    "$PROGRAM_NAME: warning: macOS clipboard image forwarding is unavailable; continuing without it${1:+: $1}" >&2
+}
+
+start_macos_clipboard_bridge() {
+  local attempt clipboard_log
+  [[ $HOST_OS == Darwin && $AGENT == codex && $CLIPBOARD == 1 ]] || return 0
+
+  if ! command -v "$OSASCRIPT_BIN" >/dev/null 2>&1; then
+    warn_macos_clipboard_unavailable "osascript not found: $OSASCRIPT_BIN"
+    return 0
+  fi
+  if ! install -d -m 700 "$DATA_HOME/clipboard"; then
+    warn_macos_clipboard_unavailable "cannot create $DATA_HOME/clipboard"
+    return 0
+  fi
+  MACOS_CLIPBOARD_ROOT=$(cd "$DATA_HOME/clipboard" && pwd -P)
+  if ! MACOS_CLIPBOARD_DIR=$(mktemp -d "$MACOS_CLIPBOARD_ROOT/session.XXXXXX"); then
+    warn_macos_clipboard_unavailable "cannot create a private clipboard session directory"
+    MACOS_CLIPBOARD_ROOT=
+    return 0
+  fi
+  trap cleanup_macos_clipboard EXIT
+  clipboard_log=$MACOS_CLIPBOARD_DIR/monitor.log
+  run_macos_clipboard_monitor "$MACOS_CLIPBOARD_DIR" \
+    >"$MACOS_CLIPBOARD_DIR/monitor.out" 2>"$clipboard_log" &
+  MACOS_CLIPBOARD_PID=$!
+
+  attempt=0
+  while ((attempt < 40)) && [[ ! -e $MACOS_CLIPBOARD_DIR/.ready ]]; do
+    if ! kill -0 "$MACOS_CLIPBOARD_PID" 2>/dev/null; then
+      break
+    fi
+    sleep 0.05
+    attempt=$((attempt + 1))
+  done
+  if [[ ! -e $MACOS_CLIPBOARD_DIR/.ready ]]; then
+    if [[ -s $clipboard_log ]]; then
+      warn_macos_clipboard_unavailable "$(head -1 "$clipboard_log")"
+    else
+      warn_macos_clipboard_unavailable "the NSPasteboard monitor did not start"
+    fi
+    cleanup_macos_clipboard
+    MACOS_CLIPBOARD_ROOT=
+    return 0
+  fi
+
+  reject_mount_comma "$MACOS_CLIPBOARD_DIR"
+  DOCKER_ARGS+=(--mount "type=bind,source=$MACOS_CLIPBOARD_DIR,target=/mnt/c/codex-clipboard")
+  DOCKER_ARGS+=(--env "DOCKER_AGENT_CLIPBOARD_BACKEND=macos")
+  # Codex 0.148.0 only enters its PowerShell clipboard fallback after a WSL
+  # check. WSL_INTEROP is the narrowest marker that reaches that check; the
+  # shim above handles the call without exposing a Windows interop socket.
+  DOCKER_ARGS+=(--env "WSL_INTEROP=/run/docker-agent/macos-clipboard")
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+}
+
 prepare_selected_image() {
   local script_dir
   if ((BUILD)); then
@@ -1356,6 +1520,7 @@ HOST_OS=${DOCKER_AGENT_HOST_OS:-${DOCKER_CODEX_HOST_OS:-$(uname -s)}}
 DATA_HOME=${DOCKER_AGENT_DATA_HOME:-${DOCKER_CODEX_DATA_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/docker-agent}}
 WAYLAND_DIR_OVERRIDE=${DOCKER_AGENT_WAYLAND_DIR:-${DOCKER_CODEX_WAYLAND_DIR:-}}
 X11_DIR_OVERRIDE=${DOCKER_AGENT_X11_DIR:-${DOCKER_CODEX_X11_DIR:-}}
+OSASCRIPT_BIN=${DOCKER_AGENT_OSASCRIPT_BIN:-/usr/bin/osascript}
 BUILD=0
 REPAIR_SESSIONS=0
 ISOLATED=
@@ -1385,6 +1550,9 @@ CURSOR_API_KEY_PATH=
 MENU_SELECTION=0
 AGENT_ARGS=()
 HAS_GIT=0
+MACOS_CLIPBOARD_ROOT=
+MACOS_CLIPBOARD_DIR=
+MACOS_CLIPBOARD_PID=
 
 if [[ ${1:-} == --create-profile ]]; then
   (($# == 1)) || die "--create-profile must be used alone"
@@ -1725,6 +1893,8 @@ fi
 # reads images through wl-paste, and Codex's first X11 attempt fails fast
 # into that fallback. Native Linux reads the clipboard through the X11
 # socket directly. Sockets are mounted as single read-only file binds.
+# macOS uses the short-lived NSPasteboard bridge started after the image and
+# network checks below, because Docker Desktop cannot mount the host clipboard.
 if ((CLIPBOARD)); then
   if [[ -n ${WSL_DISTRO_NAME:-} ]]; then
     DOCKER_ARGS+=(--env "WSL_DISTRO_NAME=$WSL_DISTRO_NAME")
@@ -1779,8 +1949,14 @@ if ((DEFAULT_NETWORK_ENABLED)); then
 fi
 
 prepare_selected_image
+start_macos_clipboard_bridge
 
 FINAL_ARGS=()
 "${AGENT_SLUG}_final_args"
 
+if [[ -n $MACOS_CLIPBOARD_DIR ]]; then
+  final_status=0
+  "$DOCKER_BIN" "${DOCKER_ARGS[@]}" "$IMAGE" "${FINAL_ARGS[@]}" || final_status=$?
+  exit "$final_status"
+fi
 exec "$DOCKER_BIN" "${DOCKER_ARGS[@]}" "$IMAGE" "${FINAL_ARGS[@]}"

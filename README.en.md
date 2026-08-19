@@ -139,7 +139,7 @@ Shared options:
     Mount a Git token file read-only at /codex-credentials/pat.
 
 --disable-clipboard
-    Do not forward host display sockets and clipboard access.
+    Do not forward the host clipboard into the container.
 
 --help, -h
     Print help.

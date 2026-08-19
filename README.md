@@ -127,7 +127,7 @@ docker-agent cursor-agent -- -p "总结当前分支的改动" --output-format js
     将 Git token 文件只读挂载到 /codex-credentials/pat。
 
 --disable-clipboard
-    不转发宿主显示 socket 和剪贴板。
+    不向容器转发宿主剪贴板。
 
 --help, -h
     输出帮助。

@@ -882,6 +882,38 @@ test_powershell_shim_reads_wayland_clipboard_image() {
         printf "%s\n" "shim unexpectedly handled a non-clipboard call" >&2
         exit 1
       fi
+  '
+}
+
+test_powershell_shim_reads_macos_clipboard_snapshot() {
+  local clip_dir="$TEST_ROOT/macos clipboard"
+  mkdir -p "$clip_dir"
+
+  "$DOCKER_BIN" run --rm \
+    --mount "type=bind,source=$clip_dir,target=/clip" \
+    --entrypoint bash \
+    "$IMAGE" -lc \
+    'python3 -c '\''from PIL import Image; Image.new("RGB", (3, 2), (0, 128, 255)).save("/clip/latest.png", "PNG")'\'''
+
+  # shellcheck disable=SC2016 # Variables expand inside the container.
+  "$DOCKER_BIN" run --rm \
+    --mount "type=bind,source=$clip_dir,target=/mnt/c/codex-clipboard" \
+    --env CODEX_CLIPBOARD_PS_SCRIPT="$CODEX_CLIPBOARD_PS_SCRIPT" \
+    --env DOCKER_AGENT_CLIPBOARD_BACKEND=macos \
+    --entrypoint bash \
+    "$IMAGE" -lc '
+      set -euo pipefail
+      out=$(powershell.exe -NoProfile -Command "$CODEX_CLIPBOARD_PS_SCRIPT")
+      [[ $out == C:\\codex-clipboard\\clipboard-*.png ]]
+      name=${out##*\\}
+      [[ $name != latest.png ]]
+      mapped=/mnt/c/codex-clipboard/$name
+      python3 -c "from PIL import Image; image = Image.open(\"$mapped\"); assert image.format == \"PNG\"; assert image.size == (3, 2)"
+      rm -f /mnt/c/codex-clipboard/latest.png
+      if powershell.exe -NoProfile -Command "$CODEX_CLIPBOARD_PS_SCRIPT"; then
+        printf "%s\\n" "macOS clipboard shim reused a stale image" >&2
+        exit 1
+      fi
     '
 }
 
@@ -912,4 +944,5 @@ test_cursor_shared_data_root_persists_writes_to_the_host
 test_cursor_agent_runs_from_its_own_bundled_runtime
 test_codex_still_sends_the_clipboard_script_the_shim_emulates
 test_powershell_shim_reads_wayland_clipboard_image
+test_powershell_shim_reads_macos_clipboard_snapshot
 printf 'image tests: PASS\n'
