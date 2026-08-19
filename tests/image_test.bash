@@ -508,33 +508,47 @@ test_wl_paste_shim_delegates_other_requests() {
   '
 }
 
-test_claude_tui_pastes_bmp_clipboard_with_ctrl_v() {
+test_wl_paste_shim_reads_macos_clipboard_snapshot() {
   local TEST_TMP
   TEST_TMP=$(new_tmp)
-  local claude_home="$TEST_TMP/home"
-  local backend="$TEST_TMP/wl-paste"
-  install -d -m 755 "$claude_home/.claude"
-  printf '%s\n' \
-    '{"hasCompletedOnboarding":true,"theme":"dark","projects":{"/workspace":{"hasTrustDialogAccepted":true}}}' \
-    >"$claude_home/.claude.json"
-  printf '%s\n' '{}' >"$claude_home/.claude/settings.json"
-  install -m 755 /dev/null "$backend"
-  # shellcheck disable=SC2016 # Variables expand when the fake backend runs.
-  printf '%s\n' \
-    '#!/usr/bin/env bash' \
-    'set -euo pipefail' \
-    'case ${1:-} in' \
-    '  -l|--list-types) printf "image/bmp\n" ;;' \
-    '  --type|-t)' \
-    '    [[ ${2:-} == image/bmp ]] || exit 1' \
-    '    printf %s Qk1GAAAAAAAAADYAAAAoAAAAAgAAAAIAAAABABgAAAAAABAAAADEDgAAxA4AAAAAAAAAAAAAAAD/AAD/AAAAAP8AAP8AAA== | base64 -d' \
-    '    ;;' \
-    '  *) exit 1 ;;' \
-    'esac' >"$backend"
+  local clip_dir="$TEST_TMP/macos-clipboard"
+  local empty_dir="$TEST_TMP/empty-macos-clipboard"
+  install -d -m 755 "$clip_dir" "$empty_dir"
+  printf '%s' \
+    'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFElEQVR4nGP4z8DA8J+BgYGBiQEKADsEA/3pLZThAAAAAElFTkSuQmCC' |
+    base64 -d >"$clip_dir/latest.png"
 
+  # shellcheck disable=SC2016 # Variables expand inside the container.
+  "$DOCKER_BIN" run --rm \
+    --env DOCKER_AGENT_CLIPBOARD_BACKEND=macos \
+    --mount "type=bind,source=$clip_dir,target=/run/docker-agent/macos-clipboard,readonly" \
+    --entrypoint bash \
+    "$IMAGE" -c '
+      set -euo pipefail
+      [[ $(wl-paste --list-types) == image/png ]]
+      cmp <(wl-paste --type image/png) \
+        /run/docker-agent/macos-clipboard/latest.png
+      ! wl-paste --type image/jpeg
+    '
+
+  "$DOCKER_BIN" run --rm \
+    --env DOCKER_AGENT_CLIPBOARD_BACKEND=macos \
+    --mount "type=bind,source=$empty_dir,target=/run/docker-agent/macos-clipboard,readonly" \
+    --entrypoint bash \
+    "$IMAGE" -c '
+      set -euo pipefail
+      ! wl-paste --list-types
+      ! wl-paste --type image/png
+    '
+}
+
+assert_claude_tui_pastes_clipboard_with_ctrl_v() {
+  local description=$1
+  local claude_home=$2
+  shift 2
   python3 - \
-    "$DOCKER_BIN" "$IMAGE" "$claude_home" "$backend" \
-    "$(id -u)" "$(id -g)" <<'PY'
+    "$DOCKER_BIN" "$IMAGE" "$claude_home" \
+    "$(id -u)" "$(id -g)" "$description" "$@" <<'PY'
 import os
 import pty
 import re
@@ -543,7 +557,7 @@ import subprocess
 import sys
 import time
 
-docker, image, home, backend, uid, gid = sys.argv[1:]
+docker, image, home, uid, gid, description, *clipboard_args = sys.argv[1:]
 container_name = f"docker-agent-claude-clipboard-{os.getpid()}-{time.time_ns()}"
 command = [
     docker,
@@ -576,14 +590,15 @@ command = [
     "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1",
     "--mount",
     f"type=bind,source={home},target=/tmp/claude-home",
-    "--mount",
-    f"type=bind,source={backend},target=/usr/bin/wl-paste,readonly",
+]
+command.extend(clipboard_args)
+command.extend([
     "--workdir",
     "/workspace",
     image,
     "-lc",
     "claude",
-]
+])
 
 master, slave = pty.openpty()
 process = subprocess.Popen(
@@ -649,12 +664,61 @@ if not pasted:
     clean = re.sub(rb"\x1b\[[0-?]*[ -/]*[@-~]", b"", bytes(output))
     clean = clean.replace(b"\r", b"\n")
     sys.stderr.write(
-        "Claude TUI did not accept the BMP clipboard after Ctrl+V:\n"
+        f"Claude TUI did not accept {description} after Ctrl+V:\n"
         + clean[-4000:].decode("utf-8", errors="replace")
         + "\n"
     )
     raise SystemExit(1)
 PY
+}
+
+test_claude_tui_pastes_bmp_clipboard_with_ctrl_v() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local claude_home="$TEST_TMP/home"
+  local backend="$TEST_TMP/wl-paste"
+  install -d -m 755 "$claude_home/.claude"
+  printf '%s\n' \
+    '{"hasCompletedOnboarding":true,"theme":"dark","projects":{"/workspace":{"hasTrustDialogAccepted":true}}}' \
+    >"$claude_home/.claude.json"
+  printf '%s\n' '{}' >"$claude_home/.claude/settings.json"
+  install -m 755 /dev/null "$backend"
+  # shellcheck disable=SC2016 # Variables expand when the fake backend runs.
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    'case ${1:-} in' \
+    '  -l|--list-types) printf "image/bmp\n" ;;' \
+    '  --type|-t)' \
+    '    [[ ${2:-} == image/bmp ]] || exit 1' \
+    '    printf %s Qk1GAAAAAAAAADYAAAAoAAAAAgAAAAIAAAABABgAAAAAABAAAADEDgAAxA4AAAAAAAAAAAAAAAD/AAD/AAAAAP8AAP8AAA== | base64 -d' \
+    '    ;;' \
+    '  *) exit 1 ;;' \
+    'esac' >"$backend"
+
+  assert_claude_tui_pastes_clipboard_with_ctrl_v \
+    "the BMP clipboard" "$claude_home" \
+    --mount "type=bind,source=$backend,target=/usr/bin/wl-paste,readonly"
+}
+
+test_claude_tui_pastes_macos_clipboard_with_ctrl_v() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local claude_home="$TEST_TMP/home"
+  local clip_dir="$TEST_TMP/macos-clipboard"
+  install -d -m 755 "$claude_home/.claude" "$clip_dir"
+  printf '%s\n' \
+    '{"hasCompletedOnboarding":true,"theme":"dark","projects":{"/workspace":{"hasTrustDialogAccepted":true}}}' \
+    >"$claude_home/.claude.json"
+  printf '%s\n' '{}' >"$claude_home/.claude/settings.json"
+  printf '%s' \
+    'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFElEQVR4nGP4z8DA8J+BgYGBiQEKADsEA/3pLZThAAAAAElFTkSuQmCC' |
+    base64 -d >"$clip_dir/latest.png"
+
+  assert_claude_tui_pastes_clipboard_with_ctrl_v \
+    "the macOS clipboard snapshot" "$claude_home" \
+    --env DOCKER_AGENT_CLIPBOARD_BACKEND=macos \
+    --mount "type=bind,source=$clip_dir,target=/run/docker-agent/macos-clipboard,readonly"
 }
 
 test_claude_runtime_is_non_root_utc_and_en_us() {
@@ -1035,7 +1099,9 @@ test_codex_ignores_shared_unmanaged_hooks
 test_codex_accepts_one_file_native_provider_profile
 test_wl_paste_shim_converts_bmp_clipboard_to_png
 test_wl_paste_shim_delegates_other_requests
+test_wl_paste_shim_reads_macos_clipboard_snapshot
 test_claude_tui_pastes_bmp_clipboard_with_ctrl_v
+test_claude_tui_pastes_macos_clipboard_with_ctrl_v
 test_claude_runtime_is_non_root_utc_and_en_us
 test_python_and_archive_tools_are_available
 test_session_repair_runs_as_host_user_and_persists_to_host

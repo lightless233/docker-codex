@@ -2,6 +2,7 @@
 set -euo pipefail
 
 BACKEND=/usr/bin/wl-paste
+MACOS_SNAPSHOT=/run/docker-agent/macos-clipboard/latest.png
 
 # WSLg may expose copied screenshots as BMP only. Claude Code requests PNG
 # first, so synthesize that one format without changing unrelated operations.
@@ -19,6 +20,23 @@ has_type() {
   local wanted=$2
   grep -Fxq "$wanted" <<<"$types"
 }
+
+# Docker Desktop cannot expose the macOS pasteboard as a Wayland socket. The
+# launcher instead mounts a current PNG snapshot for Codex and Claude. Serve
+# the two image operations Claude uses without pretending that text or other
+# clipboard formats are available.
+if [[ ${DOCKER_AGENT_CLIPBOARD_BACKEND:-} == macos ]]; then
+  if is_list_request "$@"; then
+    [[ -s $MACOS_SNAPSHOT ]] || exit 1
+    printf '%s\n' image/png
+    exit 0
+  fi
+  if is_png_request "$@"; then
+    [[ -s $MACOS_SNAPSHOT ]] || exit 1
+    exec cat "$MACOS_SNAPSHOT"
+  fi
+  exit 1
+fi
 
 if is_list_request "$@"; then
   types=$("$BACKEND" "$@")

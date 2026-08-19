@@ -1059,6 +1059,52 @@ test_macos_clipboard_bridge_is_forwarded_and_cleaned_up() {
     fail "macOS clipboard session directory survived launcher exit: $bridge_dir"
 }
 
+test_macos_clipboard_bridge_is_forwarded_to_claude() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  local fake_osascript="$TEST_TMP/osascript"
+  local osascript_log="$TEST_TMP/osascript.log"
+  local profile mount_line bridge_dir
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+  profile="$TEST_AGENT_CONFIG_HOME/claude/profiles/official-api.env"
+  printf '%s\n' 'ANTHROPIC_API_KEY=test-secret' >"$profile"
+  chmod 600 "$profile"
+
+  # shellcheck disable=SC2016 # Variables expand when the generated fake runs.
+  printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    'printf "<%s>\\n" "$@" >>"$DOCKER_AGENT_TEST_OSASCRIPT_LOG"' \
+    'output_dir=${!#}' \
+    ': >"$output_dir/.ready"' \
+    'printf PNG >"$output_dir/latest.png"' \
+    'trap "exit 0" HUP INT TERM' \
+    'while :; do sleep 1; done' \
+    >"$fake_osascript"
+  chmod +x "$fake_osascript"
+  : >"$osascript_log"
+
+  DOCKER_AGENT_HOST_OS=Darwin \
+  DOCKER_AGENT_OSASCRIPT_BIN="$fake_osascript" \
+  DOCKER_AGENT_TEST_OSASCRIPT_LOG="$osascript_log" \
+    run_named_launcher "$repo" "$ROOT" docker-claude \
+      --official-api -- --version
+
+  assert_line "<-l>" "$osascript_log"
+  assert_line "<JavaScript>" "$osascript_log"
+  assert_line "<DOCKER_AGENT_CLIPBOARD_BACKEND=macos>" "$TEST_DOCKER_LOG"
+  assert_no_line "<WSL_INTEROP=/run/docker-agent/macos-clipboard>" \
+    "$TEST_DOCKER_LOG"
+  mount_line=$(grep -F 'target=/run/docker-agent/macos-clipboard,readonly' \
+    "$TEST_DOCKER_LOG")
+  bridge_dir=${mount_line#<type=bind,source=}
+  bridge_dir=${bridge_dir%%,target=*}
+  [[ ! -e $bridge_dir ]] ||
+    fail "macOS clipboard session directory survived Claude launcher exit: $bridge_dir"
+}
+
 test_disable_clipboard_skips_macos_bridge() {
   local TEST_TMP
   TEST_TMP=$(new_tmp)
@@ -1193,6 +1239,7 @@ test_display_sockets_are_forwarded_when_present
 test_native_linux_x11_socket_is_forwarded_readonly
 test_display_sockets_are_not_forwarded_when_absent
 test_macos_clipboard_bridge_is_forwarded_and_cleaned_up
+test_macos_clipboard_bridge_is_forwarded_to_claude
 test_disable_clipboard_skips_macos_bridge
 test_disable_clipboard_skips_all_display_forwarding
 test_help_documents_public_interface_and_retained_worktrees

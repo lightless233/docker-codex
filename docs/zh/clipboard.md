@@ -5,16 +5,16 @@
 Codex/Claude 为何能读取截图时阅读本文。
 
 启动器默认转发剪贴板能力（`--disable-clipboard` 可关闭）。Linux/WSL 下
-容器内的 Codex 和 Claude 可以直接读取截图；下文的 macOS 桥接目前仅供
-`docker-codex` 使用。Linux/WSL 挂载被限制为单个 socket 文件的只读挂载：
+容器内的 Codex 和 Claude 可以直接读取截图；下文的 macOS 桥接同时支持
+`docker-codex` 和 `docker-claude`。Linux/WSL 挂载被限制为单个 socket 文件的只读挂载：
 WSLg 下只挂载 Wayland socket（取图实际走 `wl-paste`，不需要 X11）；
 原生 Linux 下挂载宿主 `XDG_RUNTIME_DIR` 中的 Wayland socket 以及 X11
 socket（`XAUTHORITY` 存在时同样只读挂载）。注意容器内的任意进程都
 可以读取宿主剪贴板，粘贴密码等敏感内容前请留意。
 
 macOS Docker Desktop 无法把宿主 `NSPasteboard` 直接挂进 Linux 容器。
-启动 `docker-codex` 时，启动器因此运行一个随会话退出的 `osascript`
-监视器：它只在剪贴板发生变化时让 AppKit 解码它所支持的图片
+启动 `docker-codex` 或 `docker-claude` 时，启动器因此运行一个随会话退出的
+`osascript` 监视器：它只在剪贴板发生变化时让 AppKit 解码它所支持的图片
 表示，统一转换为 PNG，原子写入 data home 下的私有会话目录，再把该
 目录只读挂载进容器。文本剪贴板不会写入。当前剪贴板不含图片时，旧快照会
 被删除，避免误贴上一张图；容器退出后监视器与整个会话目录一并清理。
@@ -24,7 +24,8 @@ macOS Docker Desktop 无法把宿主 `NSPasteboard` 直接挂进 Linux 容器。
 `WSL_INTEROP` 标记。`powershell.exe` shim 随后从只读挂载复制当前快照到
 容器自身、由运行 UID 持有的输出目录，并返回 Codex 预期的 Windows 形状
 路径。标记不会传给其他 agent；监视器启动失败时启动器会警告并继续运行
-Codex，只是贴图不可用。
+agent，只是贴图不可用。Claude 通过只处理图片的 `wl-paste` 兼容层读取同一份
+PNG 快照，不接收 Codex 专用标记。
 
 WSLg 可能把 PNG 截图以 `image/bmp` 暴露给 Wayland 客户端。Claude Code
 虽然会读取该 BMP 数据，但当前版本的后续图像处理可能无法接受它。镜像

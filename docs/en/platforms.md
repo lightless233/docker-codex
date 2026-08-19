@@ -51,8 +51,9 @@ The entrypoint handles common macOS identities such as UID 501/GID 20 without
 assuming the group name is unused. Host Keychain credentials remain outside
 the container. Claude subscription mode fails explicitly; use an API profile.
 
-`docker-codex` forwards clipboard images through a host `NSPasteboard` monitor
-that lives only for the session and does not require XQuartz. Use
+`docker-codex` and `docker-claude` forward clipboard images through a host
+`NSPasteboard` monitor that lives only for the session and does not require
+XQuartz. Use
 `--disable-clipboard` to turn it off; see [Clipboard forwarding](clipboard.md)
 for the implementation and security boundary.
 

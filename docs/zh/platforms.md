@@ -50,8 +50,9 @@ Docker Desktop 的文件共享设置中；若 `CODEX_HOME` 符号链接到 `/Vol
 Debian 占用。宿主机 Keychain 中的 Codex 或 Claude 凭据仍然无法进入
 容器；Claude 官方订阅模式会明确拒绝，使用 API profile 代替。
 
-`docker-codex` 默认通过随会话运行的宿主 `NSPasteboard` 监视器转发图片
-剪贴板，不要求安装 XQuartz；`--disable-clipboard` 可关闭。实现与安全边界
+`docker-codex` 和 `docker-claude` 默认通过随会话运行的宿主 `NSPasteboard`
+监视器转发图片剪贴板，不要求安装 XQuartz；`--disable-clipboard` 可关闭。
+实现与安全边界
 见[剪贴板转发](clipboard.md)。
 
 在 Apple Silicon 上，本地构建会生成原生 Linux arm64 镜像。如果项目明确

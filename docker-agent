@@ -1596,7 +1596,11 @@ warn_macos_clipboard_unavailable() {
 
 start_macos_clipboard_bridge() {
   local attempt clipboard_log
-  [[ $HOST_OS == Darwin && $AGENT == codex && $CLIPBOARD == 1 ]] || return 0
+  [[ $HOST_OS == Darwin && $CLIPBOARD == 1 ]] || return 0
+  case $AGENT in
+    codex|claude) ;;
+    *) return 0 ;;
+  esac
 
   if ! command -v "$OSASCRIPT_BIN" >/dev/null 2>&1; then
     warn_macos_clipboard_unavailable "osascript not found: $OSASCRIPT_BIN"
@@ -1644,10 +1648,12 @@ start_macos_clipboard_bridge() {
   reject_mount_comma "$MACOS_CLIPBOARD_DIR"
   DOCKER_ARGS+=(--mount "type=bind,source=$MACOS_CLIPBOARD_DIR,target=/run/docker-agent/macos-clipboard,readonly")
   DOCKER_ARGS+=(--env "DOCKER_AGENT_CLIPBOARD_BACKEND=macos")
-  # Codex 0.148.0 only enters its PowerShell clipboard fallback after a WSL
-  # check. WSL_INTEROP is the narrowest marker that reaches that check; the
-  # shim above handles the call without exposing a Windows interop socket.
-  DOCKER_ARGS+=(--env "WSL_INTEROP=/run/docker-agent/macos-clipboard")
+  if [[ $AGENT == codex ]]; then
+    # Codex 0.148.0 only enters its PowerShell clipboard fallback after a WSL
+    # check. WSL_INTEROP is the narrowest marker that reaches that check; the
+    # shim above handles the call without exposing a Windows interop socket.
+    DOCKER_ARGS+=(--env "WSL_INTEROP=/run/docker-agent/macos-clipboard")
+  fi
   trap 'exit 129' HUP
   trap 'exit 130' INT
   trap 'exit 143' TERM

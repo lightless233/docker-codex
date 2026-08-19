@@ -7,7 +7,8 @@ in-container Codex and Claude agents can read screenshots.
 
 The launcher forwards clipboard access by default (`--disable-clipboard`
 opts out). On Linux/WSL, in-container Codex and Claude can read pasted
-screenshots; the macOS bridge below currently applies only to `docker-codex`.
+screenshots. On macOS, the bridge below supports both `docker-codex` and
+`docker-claude`.
 Linux/WSL mounts are narrowed to single read-only socket file binds: on WSLg
 only the Wayland socket (image reads actually go through `wl-paste`; X11 is not mounted);
 on native Linux the Wayland socket from the host `XDG_RUNTIME_DIR` and the
@@ -16,14 +17,15 @@ any process in the container can read the host clipboard — be careful what
 you copy while a session is running.
 
 Docker Desktop on macOS cannot mount the host `NSPasteboard` directly into a
-Linux container. When `docker-codex` starts, the launcher therefore runs an
-`osascript` monitor that exits with the session. It reacts only to clipboard
-changes, lets AppKit decode any supported pasteboard image representation,
-converts it to PNG, and atomically writes it into a private session directory
-below the data home. That directory is mounted read-only into the container. Clipboard text is
-never written. When the current clipboard has no image, the previous snapshot
-is removed so it cannot be pasted accidentally; the monitor and session
-directory are cleaned up when the container exits.
+Linux container. When `docker-codex` or `docker-claude` starts, the launcher
+therefore runs an `osascript` monitor that exits with the session. It reacts
+only to clipboard changes, lets AppKit decode any supported pasteboard image
+representation, converts it to PNG, and atomically writes it into a private
+session directory below the data home. That directory is mounted read-only
+into the container. Clipboard text is never written. When the current
+clipboard has no image, the previous snapshot is removed so it cannot be
+pasted accidentally; the monitor and session directory are cleaned up when
+the container exits.
 
 Pinned Codex 0.148.0 calls its PowerShell image fallback only after deciding it
 is running under WSL. The macOS Codex container therefore receives a minimal
@@ -31,7 +33,9 @@ is running under WSL. The macOS Codex container therefore receives a minimal
 `powershell.exe` shim copies the current mounted snapshot into a container-local
 output directory owned by the runtime UID and returns the Windows-shaped path
 Codex expects. Other agents do not receive the marker. If the monitor cannot
-start, the launcher warns and continues without image paste.
+start, the launcher warns and continues without image paste. Claude reads the
+same PNG snapshot through the image-only `wl-paste` compatibility layer and
+does not receive the Codex-specific marker.
 
 WSLg can expose PNG screenshots to Wayland clients as `image/bmp`.
 Claude Code can read those BMP bytes, but the current release can fail during
