@@ -18,12 +18,14 @@ Docker daemon。使用 Codex 时宿主机需要 `${CODEX_HOME:-$HOME/.codex}`；
 # 检查依赖、构建 docker-agent:local，并安装所有启动器
 ./install.sh
 
-# 交互创建自定义 endpoint profile
+# 交互创建 Codex/Claude 自定义 endpoint profile
+docker-codex --create-profile
 docker-claude --create-profile
 
 # 在任意项目目录中启动（无需 Git repository）
 cd /path/to/your-project
 docker-agent codex
+docker-agent codex --profile relay
 docker-agent claude
 docker-agent claude --profile deepseek
 docker-agent kimi
@@ -68,6 +70,8 @@ key、自定义 endpoint；选择自定义 endpoint 后再显示按名称排序�
 
 ```bash
 docker-agent codex -- review "review the current branch"
+docker-agent codex --create-profile
+docker-agent codex --profile relay -- --version
 docker-agent claude --create-profile
 docker-agent claude --official-subscription
 docker-agent claude --official-api
@@ -131,9 +135,17 @@ docker-agent cursor-agent -- -p "总结当前分支的改动" --output-format js
 
 `--` 后的参数不再由启动器解释，原样传给所选 agent。
 
-Codex 专用维护选项：
+Codex profile 与维护选项：
 
 ```text
+--create-profile
+    在 docker-agent 配置根的 codex/profiles 下交互创建 profile；endpoint、
+    模型和 API key 保存在同一个权限为 0600 的文件中；必须单独使用。
+
+--profile NAME
+    使用并校验托管 profile，同时维护 $CODEX_HOME 下的原生兼容链接；没有该
+    选项时保持默认认证与配置。旧的 $CODEX_HOME/NAME.config.toml 仍可回退使用。
+
 --repair-sessions
     备份 Codex 状态数据库，把经过文件和 session ID 校验的历史
     /codex-home/sessions 路径迁移为宿主 CODEX_HOME 路径，然后退出。
@@ -142,6 +154,9 @@ Codex 专用维护选项：
 
 运行修复前应退出宿主和容器中的 Codex 进程。完整迁移与失败恢复语义见
 [认证与凭证](docs/zh/credentials.md)。
+
+多 profile、单文件 SK、中转站示例转换与安全限制见
+[Codex 自定义 endpoint profile](docs/zh/codex.md)。
 
 Claude 连接与 profile 选项：
 
@@ -169,6 +184,7 @@ Kimi Code 没有对应的连接选择器：它共享宿主的数据根，登录�
 
 ## 文档
 
+- [Codex 自定义 endpoint profile](docs/zh/codex.md)：多 profile、单文件 SK 与 Responses API 兼容性。
 - [Claude Code 集成](docs/zh/claude.md)：连接菜单、profile、OAuth、状态与清理。
 - [Kimi Code 集成](docs/zh/kimi.md)：数据根共享、登录、默认权限与指令注入。
 - [Cursor Agent 集成](docs/zh/cursor-agent.md)：API key、默认权限、worktree 注意事项。

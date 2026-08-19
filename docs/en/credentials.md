@@ -80,6 +80,13 @@ Configuration that names other absolute host paths still needs a corresponding
 `--bind`. STDIO MCP commands and native tools referenced by `config.toml` must
 also be installed in the image or made visible explicitly.
 
+Custom Responses endpoints can use multiple native Codex profiles. The
+launcher supports `--create-profile` and `--profile NAME`. Managed files live
+under `codex/profiles` in the docker-agent config root and are exposed to host
+Codex through compatibility links in `CODEX_HOME`; one mode-`0600` TOML file
+contains the endpoint and bearer token. See
+[Codex custom endpoint profiles](codex.md) for syntax and security limits.
+
 ## Claude Code authentication and state
 
 Claude does not receive the complete `~/.claude`. On Linux/WSL, official

@@ -291,6 +291,61 @@ test_claude_code_and_locale_are_installed() {
   '
 }
 
+test_codex_accepts_one_file_native_provider_profile() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local codex_home="$TEST_TMP/codex-home"
+  local profile_dir="$TEST_TMP/agent-config/codex/profiles"
+  local profile="$profile_dir/relay.config.toml"
+  local other_profile="$profile_dir/other.config.toml"
+  local output="$TEST_TMP/output"
+  install -d -m 700 "$codex_home"
+  install -d -m 700 "$profile_dir"
+  install -m 600 /dev/null "$profile"
+  printf '%s\n' \
+    'model_provider = "docker-agent-relay"' \
+    'model = "gpt-5.4"' \
+    'review_model = "gpt-5.4"' \
+    '' \
+    '[model_providers."docker-agent-relay"]' \
+    'name = "relay"' \
+    'base_url = "https://relay.example.invalid/v1"' \
+    'wire_api = "responses"' \
+    'experimental_bearer_token = "fixture-secret"' \
+    >"$profile"
+  install -m 600 /dev/null "$other_profile"
+  printf '%s\n' \
+    'model = "other-model"' \
+    'experimental_bearer_token = "other-secret"' \
+    >"$other_profile"
+  ln -s "$profile" "$codex_home/relay.config.toml"
+  ln -s "$other_profile" "$codex_home/other.config.toml"
+
+  "$DOCKER_BIN" run --rm --network none \
+    --user "$(id -u):$(id -g)" \
+    --mount "type=bind,source=$codex_home,target=/codex-profile-test" \
+    --mount "type=bind,source=$profile,target=$profile,readonly" \
+    --entrypoint bash \
+    "$IMAGE" -lc \
+    '[[ -r /codex-profile-test/relay.config.toml ]] &&
+     [[ ! -e /codex-profile-test/other.config.toml ]]'
+
+  if "$DOCKER_BIN" run --rm --network none \
+      --user "$(id -u):$(id -g)" \
+      --env CODEX_HOME=/codex-profile-test \
+      --mount "type=bind,source=$codex_home,target=/codex-profile-test" \
+      --mount "type=bind,source=$profile,target=$profile,readonly" \
+      --entrypoint codex \
+      "$IMAGE" \
+      --strict-config --profile relay \
+      archive no-such-session-for-config-test >"$output" 2>&1; then
+    fail "Codex unexpectedly found the profile validation session"
+  fi
+  assert_contains \
+    "No active session found matching 'no-such-session-for-config-test'." \
+    "$output"
+}
+
 test_wl_paste_shim_converts_bmp_clipboard_to_png() {
   local TEST_TMP
   TEST_TMP=$(new_tmp)
@@ -840,6 +895,7 @@ test_runtime_user_keeps_host_docker_supplementary_group
 test_login_shell_keeps_toolchain_on_path
 test_go_toolchain_and_cache_are_available
 test_claude_code_and_locale_are_installed
+test_codex_accepts_one_file_native_provider_profile
 test_wl_paste_shim_converts_bmp_clipboard_to_png
 test_wl_paste_shim_delegates_other_requests
 test_claude_tui_pastes_bmp_clipboard_with_ctrl_v

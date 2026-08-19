@@ -20,12 +20,14 @@ when missing, and you can log in from inside the container.
 # Check dependencies, build docker-agent:local, and install every launcher
 ./install.sh
 
-# Interactively create a custom-endpoint profile
+# Interactively create Codex/Claude custom-endpoint profiles
+docker-codex --create-profile
 docker-claude --create-profile
 
 # Launch from any project directory (no Git repository required)
 cd /path/to/your-project
 docker-agent codex
+docker-agent codex --profile relay
 docker-agent claude
 docker-agent claude --profile deepseek
 docker-agent kimi
@@ -77,6 +79,8 @@ Common commands:
 
 ```bash
 docker-agent codex -- review "review the current branch"
+docker-agent codex --create-profile
+docker-agent codex --profile relay -- --version
 docker-agent claude --create-profile
 docker-agent claude --official-subscription
 docker-agent claude --official-api
@@ -143,9 +147,19 @@ Shared options:
 
 Arguments after `--` are passed unchanged to the selected agent.
 
-Codex-only maintenance option:
+Codex profile and maintenance options:
 
 ```text
+--create-profile
+    Interactively create a profile under codex/profiles in the docker-agent
+    config root, with endpoint, model, and API key in one mode-0600 file;
+    must be used alone.
+
+--profile NAME
+    Validate and use a managed profile while maintaining its native link in
+    CODEX_HOME. Legacy $CODEX_HOME/NAME.config.toml files remain supported.
+    Without this option, keep the default authentication and configuration.
+
 --repair-sessions
     Back up Codex's state database, migrate legacy /codex-home/sessions paths
     whose files and session IDs validate to the host CODEX_HOME path, then
@@ -155,6 +169,9 @@ Codex-only maintenance option:
 Exit host and container Codex processes before running the repair. See
 [Authentication and credentials](docs/en/credentials.md) for migration and
 failure-recovery semantics.
+
+See [Codex custom endpoint profiles](docs/en/codex.md) for multiple profiles,
+one-file keys, relay-example conversion, and security limitations.
 
 Claude connection and profile options:
 
@@ -183,6 +200,7 @@ file; see [Cursor Agent integration](docs/en/cursor-agent.md).
 
 ## Docs
 
+- [Codex custom endpoint profiles](docs/en/codex.md): multiple profiles, one-file keys, Responses API compatibility.
 - [Claude Code integration](docs/en/claude.md): menus, profiles, OAuth, state, cleanup.
 - [Kimi Code integration](docs/en/kimi.md): shared data root, login, default permission, notes.
 - [Cursor Agent integration](docs/en/cursor-agent.md): API key, default permission, worktree caveat.

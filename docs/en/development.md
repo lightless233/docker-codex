@@ -54,14 +54,19 @@ DOCKER_AGENT_TEST_IMAGE=docker-agent:local tests/image_test.bash
 
 The test suite uses real temporary Git repositories, linked worktrees, and
 submodules while replacing only the external Docker boundary.
-`session_repair_test.py` uses only temporary `CODEX_HOME` fixtures to verify
-SQLite/WAL-consistent backups, path and session-ID validation, lock timeouts,
-transaction rollback, and idempotence; it never reads or modifies real user
-Codex state. The separate image test runs a real container and verifies Debian, Node provenance,
-Codex/Claude/Kimi versions, numeric UID/GID, Claude UTC/locale/telemetry
-policy, where the Kimi instruction file lands, execution of the Codex session
-repair tool after dropping privileges, absence of the root group, and
-passwordless sudo. `bash32_compat_test.bash` reruns the complete shell suite in
+`codex_profile_test.bash` uses a temporary `CODEX_HOME`, docker-agent config
+root, and pseudoterminal to verify one-file profile creation, native
+compatibility links, selected-profile-only mounts, key masking, TOML escaping,
+metadata checks, and selection arguments. `session_repair_test.py` uses only temporary
+`CODEX_HOME` fixtures to verify SQLite/WAL-consistent backups, path and
+session-ID validation, lock timeouts, transaction rollback, and idempotence;
+it never reads or modifies real user Codex state. The separate image test runs
+a real container and verifies Debian, Node provenance, Codex/Claude/Kimi
+versions, strict parsing of a Codex profile loaded through its compatibility
+link with only the selected file mounted, numeric UID/GID, Claude
+UTC/locale/telemetry policy, where the Kimi instruction file lands, execution
+of the Codex session repair tool after dropping privileges, absence of the
+root group, and passwordless sudo. `bash32_compat_test.bash` reruns the complete shell suite in
 the official Bash 3.2 image to cover the syntax and runtime behavior of the
 Bash version shipped with macOS. Its first run pulls the image and Alpine test
 dependencies. Linux image builds and

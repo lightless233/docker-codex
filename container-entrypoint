@@ -222,7 +222,8 @@ CARGO_TARGET_DIR="/codex-cache/cargo-targets/$(basename "$worktree_root")-$workt
 export CARGO_TARGET_DIR
 
 if [[ ${1:-} == codex ]]; then
-  if ! gosu "$HOST_UID:$HOST_GID" codex login status >/dev/null 2>&1; then
+  if [[ -z ${DOCKER_AGENT_CODEX_PROFILE:-} ]] &&
+     ! gosu "$HOST_UID:$HOST_GID" codex login status >/dev/null 2>&1; then
     printf '%s\n' \
       'docker-codex: warning: container cannot use the current Codex login; file auth can be shared, host keyrings cannot.' >&2
   fi

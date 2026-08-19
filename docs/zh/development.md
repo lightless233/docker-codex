@@ -50,12 +50,15 @@ DOCKER_AGENT_TEST_IMAGE=docker-agent:local tests/image_test.bash
 ```
 
 shell 测试会使用真实的临时 Git 仓库、linked worktree 和 submodule，只在
-Docker 外部边界使用 fake command。`session_repair_test.py` 只在临时
-`CODEX_HOME` 中验证 SQLite/WAL 一致性备份、路径与 session ID 校验、锁超时、
-事务回滚和幂等性，绝不读取或修改用户真实 Codex 状态。独立的镜像测试会运行真实容器，验证
-Debian、Node 安装来源、Codex/Claude/Kimi 版本、数值 UID/GID、Claude 的
-UTC/locale/遥测策略、Kimi 指令文件的落点、Codex session 修复工具的降权运行、
-未加入 root 组以及免密 sudo。
+Docker 外部边界使用 fake command。`codex_profile_test.bash` 使用临时
+`CODEX_HOME`、docker-agent 配置根和伪终端验证单文件 profile 创建、原生
+兼容链接、单 profile 挂载、密钥遮罩、TOML 转义、权限校验与选择参数；
+`session_repair_test.py` 只在临时 `CODEX_HOME` 中验证
+SQLite/WAL 一致性备份、路径与 session ID 校验、锁超时、事务回滚和幂等性，
+绝不读取或修改用户真实 Codex 状态。独立的镜像测试会运行真实容器，验证
+Debian、Node 安装来源、Codex/Claude/Kimi 版本、经兼容链接加载且仅挂载当前
+文件的 Codex profile 严格配置解析、数值 UID/GID、Claude 的 UTC/locale/遥测策略、Kimi 指令文件的落点、
+Codex session 修复工具的降权运行、未加入 root 组以及免密 sudo。
 `bash32_compat_test.bash` 会在官方 Bash 3.2 镜像内重新运行完整 shell 测试，
 覆盖 macOS 自带 Bash 的语法和运行时行为；首次运行需要拉取镜像和 Alpine
 测试依赖。

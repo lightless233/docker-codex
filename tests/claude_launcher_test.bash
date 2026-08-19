@@ -283,11 +283,6 @@ test_profile_creator_is_standalone_claude_action() {
 
   "$ROOT/docker-claude" --help >"$help"
   assert_contains "--create-profile" "$help"
-
-  if "$ROOT/docker-codex" --create-profile >"$output" 2>&1; then
-    fail "Codex unexpectedly accepted --create-profile"
-  fi
-  assert_contains "--create-profile is only valid for Claude" "$output"
 }
 
 test_official_api_profile_is_mounted_without_secret_in_docker_args() {

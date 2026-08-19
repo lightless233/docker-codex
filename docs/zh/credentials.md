@@ -75,6 +75,12 @@ docker-agent codex --repair-sessions
 配置中的 STDIO MCP 命令和本地工具也必须已经安装在镜像中，或者显式挂载到
 容器内。
 
+自定义 Responses endpoint 可以使用多个原生 Codex profile。启动器支持
+`--create-profile` 和 `--profile NAME`。托管文件位于 docker-agent 配置根的
+`codex/profiles` 下，并通过 `$CODEX_HOME` 中的兼容链接供宿主 Codex 使用；
+单个权限为 `0600` 的 TOML 保存 endpoint 与 bearer token。具体格式和安全限制见
+[Codex 自定义 endpoint profile](codex.md)。
+
 ## Claude Code 认证与状态
 
 Claude 不挂载完整 `~/.claude`。Linux/WSL 的官方订阅模式只把宿主

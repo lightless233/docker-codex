@@ -67,6 +67,10 @@ Options:
                           the default; legacy DOCKER_CODEX_PAT_PATH also works)
   --disable-clipboard     Do not forward the host clipboard (display sockets)
                           into the container
+  --profile NAME          Use a protected managed Codex profile, with legacy
+                          $CODEX_HOME/NAME.config.toml fallback
+  --create-profile        Interactively create a protected one-file endpoint
+                          profile under the docker-agent config home, then exit
   --repair-sessions      Back up and repair legacy /codex-home session paths,
                           then exit without starting Codex
   --help, -h              Show this help
@@ -633,6 +637,50 @@ validate_claude_profile_name() {
     die "reserved Claude profile name: official-api"
 }
 
+validate_codex_profile_name() {
+  [[ $CODEX_PROFILE_NAME =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
+    die "invalid Codex profile name: $CODEX_PROFILE_NAME"
+}
+
+resolve_codex_profile_root() {
+  local checkout_root=
+
+  CONFIG_ROOT=${DOCKER_AGENT_CONFIG_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/docker-agent}
+  install -d -m 700 "$CONFIG_ROOT"
+  install -d -m 700 "$CONFIG_ROOT/codex"
+  install -d -m 700 "$CONFIG_ROOT/codex/profiles"
+  CONFIG_ROOT=$(cd "$CONFIG_ROOT" && pwd -P)
+  CODEX_PROFILE_ROOT=$(cd "$CONFIG_ROOT/codex/profiles" && pwd -P)
+  path_is_within "$CODEX_PROFILE_ROOT" "$CONFIG_ROOT" ||
+    die "Codex profile directory resolves outside docker-agent config home"
+
+  if [[ -n ${CHECKOUT_ROOT:-} ]]; then
+    checkout_root=$CHECKOUT_ROOT
+  elif command -v git >/dev/null 2>&1 &&
+      checkout_root=$(git rev-parse --show-toplevel 2>/dev/null); then
+    checkout_root=$(cd "$checkout_root" && pwd -P)
+  fi
+  if [[ -n $checkout_root ]]; then
+    path_is_within "$CONFIG_ROOT" "$checkout_root" &&
+      die "docker-agent config home must not be inside the checkout"
+    path_is_within "$CODEX_PROFILE_ROOT" "$checkout_root" &&
+      die "Codex profile must not be inside the checkout"
+  fi
+  path_is_within "$CODEX_PROFILE_ROOT" "$CODEX_HOME_PHYSICAL" &&
+    die "Codex profile directory must not be inside CODEX_HOME"
+  return 0
+}
+
+toml_basic_string() {
+  local value=$1
+  if LC_ALL=C printf '%s' "$value" | grep -q '[[:cntrl:]]'; then
+    return 1
+  fi
+  value=${value//\\/\\\\}
+  value=${value//\"/\\\"}
+  printf '"%s"' "$value"
+}
+
 read_masked_profile_value() {
   local prompt=$1
   local input_fd=0 output_fd=1
@@ -750,6 +798,112 @@ create_claude_profile() {
     '************************************************************' >&"$output_fd"
 }
 
+create_codex_profile() {
+  local input_fd=0 output_fd=1
+  local profile_path compat_path provider_id checkout_root
+  local profile_name endpoint model api_key temp_file=
+  local created_profile='' created_link=''
+  local quoted_profile quoted_provider quoted_endpoint quoted_model quoted_key
+
+  if [[ ! -t $input_fd || ! -t $output_fd ]]; then
+    die "--create-profile requires an interactive terminal"
+  fi
+
+  resolve_codex_home
+  if command -v git >/dev/null 2>&1 &&
+      checkout_root=$(git rev-parse --show-toplevel 2>/dev/null); then
+    checkout_root=$(cd "$checkout_root" && pwd -P)
+    path_is_within "$CODEX_HOME_PHYSICAL" "$checkout_root" &&
+      die "Codex profiles must not be stored inside the checkout"
+  fi
+
+  printf 'Profile 名称: ' >&"$output_fd"
+  IFS= read -r profile_name <&"$input_fd" ||
+    die "Profile name is required"
+  [[ -n $profile_name ]] || die "Profile name is required"
+  CODEX_PROFILE_NAME=$profile_name
+  validate_codex_profile_name
+
+  resolve_codex_profile_root
+  profile_path="$CODEX_PROFILE_ROOT/$CODEX_PROFILE_NAME.config.toml"
+  compat_path="$CODEX_HOME_LOGICAL/$CODEX_PROFILE_NAME.config.toml"
+  if [[ -e $profile_path || -L $profile_path ]]; then
+    die "Codex profile already exists: $profile_path"
+  fi
+  if [[ -e $compat_path || -L $compat_path ]]; then
+    die "native Codex profile path already exists: $compat_path"
+  fi
+
+  printf 'API endpoint: ' >&"$output_fd"
+  IFS= read -r endpoint <&"$input_fd" ||
+    die "API endpoint is required"
+  [[ -n $endpoint ]] || die "API endpoint is required"
+
+  printf '模型名称: ' >&"$output_fd"
+  IFS= read -r model <&"$input_fd" ||
+    die "Model name is required"
+  [[ -n $model ]] || die "Model name is required"
+
+  MASKED_PROFILE_VALUE=
+  read_masked_profile_value "API key: " ||
+    return $?
+  api_key=$MASKED_PROFILE_VALUE
+  [[ -n $api_key ]] || die "API key is required"
+
+  provider_id="docker-agent-$CODEX_PROFILE_NAME"
+  quoted_profile=$(toml_basic_string "$CODEX_PROFILE_NAME") ||
+    die "Codex profile name contains unsupported control characters"
+  quoted_provider=$(toml_basic_string "$provider_id") ||
+    die "Codex provider id contains unsupported control characters"
+  quoted_endpoint=$(toml_basic_string "$endpoint") ||
+    die "API endpoint contains unsupported control characters"
+  quoted_model=$(toml_basic_string "$model") ||
+    die "Model name contains unsupported control characters"
+  quoted_key=$(toml_basic_string "$api_key") ||
+    die "API key contains unsupported control characters"
+
+  temp_file=$(mktemp "$CODEX_PROFILE_ROOT/.docker-agent-codex-profile.XXXXXX") ||
+    die "unable to create temporary Codex profile"
+  chmod 600 "$temp_file"
+  trap '[[ -z ${created_link:-} ]] || rm -f "$created_link"
+        [[ -z ${created_profile:-} ]] || rm -f "$created_profile"
+        [[ -z ${temp_file:-} ]] || rm -f "$temp_file"' EXIT
+  trap 'exit 130' HUP INT TERM
+  printf '%s\n' \
+    "model_provider = $quoted_provider" \
+    "model = $quoted_model" \
+    "review_model = $quoted_model" \
+    '' \
+    "[model_providers.$quoted_provider]" \
+    "name = $quoted_profile" \
+    "base_url = $quoted_endpoint" \
+    'wire_api = "responses"' \
+    "experimental_bearer_token = $quoted_key" >"$temp_file"
+  if ! ln "$temp_file" "$profile_path" 2>/dev/null; then
+    die "Codex profile already exists: $profile_path"
+  fi
+  created_profile=$profile_path
+  if ! ln -s "$profile_path" "$compat_path" 2>/dev/null; then
+    die "native Codex profile path already exists: $compat_path"
+  fi
+  created_link=$compat_path
+  rm -f "$temp_file"
+  temp_file=
+  api_key=
+  MASKED_PROFILE_VALUE=
+  quoted_key=
+
+  validate_owned_mode_600_file "$profile_path" "Codex profile"
+  [[ -L $compat_path && $(readlink "$compat_path") == "$profile_path" ]] ||
+    die "unable to create native Codex profile compatibility link"
+  created_link=
+  created_profile=
+  trap - EXIT HUP INT TERM
+  printf 'Profile 已创建：%s\n' "$profile_path" >&"$output_fd"
+  printf '启动：docker-codex --profile %s\n' \
+    "$CODEX_PROFILE_NAME" >&"$output_fd"
+}
+
 resolve_claude_connection() {
   local expected_profile profile_dir
 
@@ -796,6 +950,36 @@ validate_owned_mode_600_file() {
     die "$label must be owned by the current user: $file"
   [[ $(file_mode "$file") == 600 ]] ||
     die "$label must have mode 600: $file"
+}
+
+physical_symlink_target() {
+  local link=$1 target target_dir
+  target=$(readlink "$link") || return 1
+  if [[ $target != /* ]]; then
+    target="$(dirname "$link")/$target"
+  fi
+  target_dir=$(dirname "$target")
+  [[ -d $target_dir ]] || return 1
+  target_dir=$(cd -P "$target_dir" && pwd -P) || return 1
+  printf '%s/%s\n' "$target_dir" "$(basename "$target")"
+}
+
+ensure_codex_native_profile_link() {
+  local resolved_target
+
+  if [[ ! -e $CODEX_PROFILE_COMPAT_PATH &&
+        ! -L $CODEX_PROFILE_COMPAT_PATH ]]; then
+    ln -s "$CODEX_PROFILE_PATH" "$CODEX_PROFILE_COMPAT_PATH" 2>/dev/null ||
+      die "unable to create native Codex profile link: $CODEX_PROFILE_COMPAT_PATH"
+  fi
+  [[ -L $CODEX_PROFILE_COMPAT_PATH ]] ||
+    die "native Codex profile path conflicts with managed profile: $CODEX_PROFILE_COMPAT_PATH"
+  [[ $(file_uid "$CODEX_PROFILE_COMPAT_PATH") == "$(id -u)" ]] ||
+    die "native Codex profile link must be owned by the current user: $CODEX_PROFILE_COMPAT_PATH"
+  resolved_target=$(physical_symlink_target "$CODEX_PROFILE_COMPAT_PATH") ||
+    die "native Codex profile link target does not exist: $CODEX_PROFILE_COMPAT_PATH"
+  [[ $resolved_target == "$CODEX_PROFILE_PATH" ]] ||
+    die "native Codex profile link points to a different file: $CODEX_PROFILE_COMPAT_PATH"
 }
 
 resolve_claude_credential_source() {
@@ -894,6 +1078,32 @@ run_agent_hook() {
   fi
 }
 
+resolve_codex_launch() {
+  local profile_dir managed_profile legacy_profile
+  [[ -n $CODEX_PROFILE_NAME ]] || return 0
+
+  resolve_codex_home
+  resolve_codex_profile_root
+  profile_dir=$(cd "$CODEX_HOME_LOGICAL" && pwd -P)
+  managed_profile="$CODEX_PROFILE_ROOT/$CODEX_PROFILE_NAME.config.toml"
+  legacy_profile="$profile_dir/$CODEX_PROFILE_NAME.config.toml"
+  CODEX_PROFILE_COMPAT_PATH="$CODEX_HOME_LOGICAL/$CODEX_PROFILE_NAME.config.toml"
+
+  if [[ -e $managed_profile || -L $managed_profile ]]; then
+    CODEX_PROFILE_PATH=$managed_profile
+    validate_owned_mode_600_file "$CODEX_PROFILE_PATH" "Codex profile"
+    ensure_codex_native_profile_link
+    CODEX_PROFILE_MANAGED=1
+  else
+    CODEX_PROFILE_PATH=$legacy_profile
+    validate_owned_mode_600_file "$CODEX_PROFILE_PATH" "Codex profile"
+    CODEX_PROFILE_MANAGED=0
+  fi
+  path_is_within "$legacy_profile" "$CHECKOUT_ROOT" &&
+    die "Codex profile must not be inside the checkout"
+  return 0
+}
+
 resolve_claude_launch() {
   if [[ -z $CLAUDE_CONNECTION ]]; then
     if ! launcher_has_tty; then
@@ -934,11 +1144,18 @@ prepare_claude_state_hook() {
 configure_codex_runtime() {
   resolve_codex_home
   DOCKER_ARGS+=(--env "CODEX_HOME=$CODEX_HOME_LOGICAL")
+  if [[ -n $CODEX_PROFILE_NAME ]]; then
+    DOCKER_ARGS+=(--env "DOCKER_AGENT_CODEX_PROFILE=$CODEX_PROFILE_NAME")
+  fi
   if [[ ${CHECKOUT_ROOT:-} != "$CODEX_HOME_LOGICAL" ]]; then
     DOCKER_ARGS+=(--mount "type=bind,source=$CODEX_HOME_PHYSICAL,target=$CODEX_HOME_LOGICAL")
   fi
   if [[ $CODEX_HOME_LOGICAL != /codex-home ]]; then
     DOCKER_ARGS+=(--mount "type=bind,source=$CODEX_HOME_PHYSICAL,target=/codex-home")
+  fi
+  if ((CODEX_PROFILE_MANAGED)); then
+    reject_mount_comma "$CODEX_PROFILE_PATH"
+    DOCKER_ARGS+=(--mount "type=bind,source=$CODEX_PROFILE_PATH,target=$CODEX_PROFILE_PATH,readonly")
   fi
 }
 
@@ -978,8 +1195,14 @@ configure_kimi_runtime() {
 }
 
 codex_final_args() {
-  FINAL_ARGS=(codex --yolo --disable apps \
-    ${AGENT_ARGS[@]+"${AGENT_ARGS[@]}"})
+  if [[ -n $CODEX_PROFILE_NAME ]]; then
+    FINAL_ARGS=(codex --yolo --disable apps \
+      --profile "$CODEX_PROFILE_NAME" \
+      ${AGENT_ARGS[@]+"${AGENT_ARGS[@]}"})
+  else
+    FINAL_ARGS=(codex --yolo --disable apps \
+      ${AGENT_ARGS[@]+"${AGENT_ARGS[@]}"})
+  fi
 }
 
 claude_final_args() {
@@ -1148,6 +1371,11 @@ NETWORKS=()
 PAT_VALUE=
 PAT_PATH=${DOCKER_AGENT_PAT_PATH:-${DOCKER_CODEX_PAT_PATH:-}}
 PAT_OPTION_SET=0
+CODEX_PROFILE_NAME=
+CODEX_PROFILE_PATH=
+CODEX_PROFILE_ROOT=
+CODEX_PROFILE_COMPAT_PATH=
+CODEX_PROFILE_MANAGED=0
 CLAUDE_CONNECTION=
 CLAUDE_PROFILE_NAME=
 CLAUDE_PROFILE_PATH=
@@ -1159,10 +1387,18 @@ AGENT_ARGS=()
 HAS_GIT=0
 
 if [[ ${1:-} == --create-profile ]]; then
-  [[ $AGENT == claude ]] ||
-    die "--create-profile is only valid for Claude"
   (($# == 1)) || die "--create-profile must be used alone"
-  create_claude_profile
+  case $AGENT in
+    codex)
+      create_codex_profile
+      ;;
+    claude)
+      create_claude_profile
+      ;;
+    *)
+      die "--create-profile is only valid for Codex or Claude"
+      ;;
+  esac
   exit 0
 fi
 
@@ -1245,9 +1481,21 @@ while (($#)); do
       ;;
     --profile)
       (($# >= 2)) || die "--profile requires a name"
-      select_claude_connection "$1"
-      CLAUDE_PROFILE_NAME=$2
-      CLAUDE_CONNECTION="profile:$CLAUDE_PROFILE_NAME"
+      case $AGENT in
+        codex)
+          [[ -z $CODEX_PROFILE_NAME ]] ||
+            die "--profile may only be specified once for Codex"
+          CODEX_PROFILE_NAME=$2
+          ;;
+        claude)
+          select_claude_connection "$1"
+          CLAUDE_PROFILE_NAME=$2
+          CLAUDE_CONNECTION="profile:$CLAUDE_PROFILE_NAME"
+          ;;
+        *)
+          die "--profile is only valid for Codex or Claude"
+          ;;
+      esac
       shift 2
       ;;
     --create-profile)
@@ -1273,11 +1521,14 @@ if ((REPAIR_SESSIONS)); then
         ${ENV_SPECS[0]+set} == set || ${NETWORKS[0]+set} == set ||
         $DEFAULT_NETWORK_ENABLED == 0 || $HOST_DOCKER == 1 ||
         $PAT_OPTION_SET == 1 || $CLIPBOARD == 0 ||
-        ${AGENT_ARGS[0]+set} == set ]]; then
+        ${AGENT_ARGS[0]+set} == set || -n $CODEX_PROFILE_NAME ]]; then
     die "--repair-sessions cannot be combined with agent runtime options or arguments"
   fi
 fi
 
+if [[ -n $CODEX_PROFILE_NAME ]]; then
+  validate_codex_profile_name
+fi
 if [[ -n $CLAUDE_PROFILE_NAME ]]; then
   validate_claude_profile_name
 fi

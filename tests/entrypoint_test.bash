@@ -250,6 +250,25 @@ test_login_failure_warns_but_still_runs_codex() {
   assert_line "<--version>" "$log"
 }
 
+test_custom_codex_profile_skips_irrelevant_official_login_check() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local fake_bin="$TEST_TMP/bin"
+  local log="$TEST_TMP/system.log"
+  local errors="$TEST_TMP/errors"
+  : >"$log"
+  make_fake_system_commands "$fake_bin"
+
+  DOCKER_AGENT_CODEX_PROFILE=relay FAKE_LOGIN_STATUS=1 \
+    run_entrypoint "$fake_bin" "$log" codex --profile relay --version \
+    2>"$errors"
+
+  assert_not_contains "cannot use the current Codex login" "$errors"
+  assert_no_contiguous_lines "$log" \
+    "<CALL:gosu>" "<12345:23456>" "<codex>" "<login>" "<status>"
+  assert_ordered_lines "$log" "<codex>" "<--profile>" "<relay>" "<--version>"
+}
+
 test_final_command_exit_status_is_preserved() {
   local TEST_TMP
   TEST_TMP=$(new_tmp)
@@ -858,6 +877,7 @@ test_unwritable_codex_home_fails_before_codex_without_changing_permissions
 test_existing_gid_is_reused_and_existing_uid_skips_user_creation
 test_host_docker_gid_adds_runtime_user_to_socket_group
 test_login_failure_warns_but_still_runs_codex
+test_custom_codex_profile_skips_irrelevant_official_login_check
 test_final_command_exit_status_is_preserved
 test_existing_user_and_package_caches_are_exported_consistently
 test_cargo_target_dir_is_scoped_per_worktree

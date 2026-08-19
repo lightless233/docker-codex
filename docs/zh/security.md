@@ -24,6 +24,12 @@ Codex 固定使用 `--yolo`；Claude 固定使用
 
 Codex 在宿主和容器相同的逻辑绝对路径收到完整的宿主 Codex home；同一物理
 目录在 `/codex-home` 的第二个挂载只用于兼容旧 session 路径，不会扩大可见数据。
+托管 Codex endpoint profile 位于 docker-agent 配置根之外；`CODEX_HOME` 中
+只有兼容链接。选择 `--profile` 时，启动器只把当前 profile 只读挂载到链接
+目标，其他托管 profile 在容器内保持不可达。当前 Codex 和其命令仍能读取所选
+profile 中的明文 bearer token，因此只使用最小权限、可撤销的 key。旧的
+`$CODEX_HOME/*.config.toml` 会随完整目录一起暴露。详见
+[Codex 自定义 endpoint profile](codex.md)。
 Claude 不收到完整 `~/.claude`：官方
 订阅只挂载单个 `.credentials.json`，API/custom 只挂载选中的 profile，
 其他 session 状态来自独立 data root。profile secret 和 OAuth 凭证对选中

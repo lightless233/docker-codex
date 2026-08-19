@@ -148,12 +148,12 @@ test_claude_only_selectors_are_rejected() {
   if run_kimi_launcher "$repo" --profile custom >"$errors" 2>&1; then
     fail "--profile unexpectedly succeeded for Kimi Code"
   fi
-  assert_contains "--profile is only valid for Claude" "$errors"
+  assert_contains "--profile is only valid for Codex or Claude" "$errors"
 
   if run_kimi_launcher "$repo" --create-profile >"$errors" 2>&1; then
     fail "--create-profile unexpectedly succeeded for Kimi Code"
   fi
-  assert_contains "--create-profile is only valid for Claude" "$errors"
+  assert_contains "--create-profile is only valid for Codex or Claude" "$errors"
 }
 
 test_shared_launcher_options_apply_to_kimi() {
