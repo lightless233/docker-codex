@@ -49,7 +49,7 @@ project specifically needs a Linux amd64 development environment, select it
 explicitly, for example:
 
 ```bash
-DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -t docker-agent:local .
+DOCKER_DEFAULT_PLATFORM=linux/amd64 ./install.sh
 ```
 
 Emulated amd64 builds and workloads are slower.

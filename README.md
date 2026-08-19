@@ -9,17 +9,14 @@ Git checkout，启动器还会管理 Git metadata、构建缓存、可选 worktr
 
 ## 快速开始
 
-前置条件：Git、Bash 3.2+、已经启动的 Docker daemon。使用 Codex 时宿主机
-需要 `${CODEX_HOME:-$HOME/.codex}`；复用 Claude 官方订阅时，需要先在
-Linux/WSL 宿主机上完成 Claude Code 登录。Kimi Code 的数据目录缺失时会
-自动创建，可以直接在容器内登录。
+前置条件：Git、Bash 3.2+、Docker CLI、Docker Buildx，以及已经启动的
+Docker daemon。使用 Codex 时宿主机需要 `${CODEX_HOME:-$HOME/.codex}`；
+复用 Claude 官方订阅时，需要先在 Linux/WSL 宿主机上完成 Claude Code
+登录。Kimi Code 的数据目录缺失时会自动创建，可以直接在容器内登录。
 
 ```bash
-# 在源码目录构建一次共享镜像
-docker build -t docker-agent:local .
-
-# 安装 docker-agent 以及每个 agent 对应的启动器
-sudo ./install.sh
+# 检查依赖、构建 docker-agent:local，并安装所有启动器
+./install.sh
 
 # 交互创建自定义 endpoint profile
 docker-claude --create-profile
@@ -35,9 +32,17 @@ docker-agent cursor-agent
 
 `docker-codex` 等价于 `docker-agent codex`，`docker-claude` 等价于
 `docker-agent claude`，`docker-kimi` 等价于 `docker-agent kimi`，
-`docker-cursor-agent` 等价于 `docker-agent cursor-agent`。没有 `sudo`
-时，运行 `./install.sh --prefix "$HOME/.local"` 安装到
-`$HOME/.local/bin`。
+`docker-cursor-agent` 等价于 `docker-agent cursor-agent`。不要用 `sudo`
+运行整个安装器：镜像始终以当前用户身份构建，只有向 `/usr/local/bin`
+安装启动器时脚本才会按需请求管理员权限。也可以运行
+`./install.sh --prefix "$HOME/.local"` 安装到 `$HOME/.local/bin`，从而不
+需要管理员权限；开发或自动化场景可用 `--skip-build` 只安装启动器。
+
+Docker Desktop 通常已经包含 Buildx。如果 Docker CLI 是通过 Homebrew
+单独安装的，并且安装器提示缺少 Buildx，请运行
+`brew install docker-buildx`。若 `docker buildx version` 仍无法识别插件，
+请把 `$(brew --prefix)/lib/docker/cli-plugins` 对应的实际路径加入
+`~/.docker/config.json` 的 `cliPluginsExtraDirs`。
 
 Cursor Agent 需要先准备一个 API key 文件，见
 [Cursor Agent 集成](docs/zh/cursor-agent.md)。

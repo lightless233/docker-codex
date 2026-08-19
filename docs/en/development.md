@@ -48,6 +48,7 @@ Validate the Dockerfile, build the image, then run shell and real-container test
 docker build --check .
 docker build -t docker-agent:local .
 tests/run.bash
+tests/bash32_compat_test.bash
 DOCKER_AGENT_TEST_IMAGE=docker-agent:local tests/image_test.bash
 ```
 
@@ -56,7 +57,10 @@ submodules while replacing only the external Docker boundary. The separate
 image test runs a real container and verifies Debian, Node provenance,
 Codex/Claude/Kimi versions, numeric UID/GID, Claude UTC/locale/telemetry
 policy, where the Kimi instruction file lands, absence of the root group, and
-passwordless sudo. Linux image builds and
+passwordless sudo. `bash32_compat_test.bash` reruns the complete shell suite in
+the official Bash 3.2 image to cover the syntax and runtime behavior of the
+Bash version shipped with macOS. Its first run pulls the image and Alpine test
+dependencies. Linux image builds and
 runtime smoke tests are part of release verification.
 
 macOS path/argument branches and the multi-architecture image definition are

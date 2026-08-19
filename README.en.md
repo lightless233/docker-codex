@@ -10,18 +10,15 @@ build caches, optional worktrees, and clipboard forwarding. The original
 
 ## Quick start
 
-Prerequisites are Git, Bash 3.2+, and a running Docker daemon. Codex requires
-`${CODEX_HOME:-$HOME/.codex}` on the host. Reusing a Claude subscription
-requires a completed Claude Code login on a Linux or WSL host. Kimi Code needs
-no host setup: its data directory is created when missing, and you can log in
-from inside the container.
+Prerequisites are Git, Bash 3.2+, the Docker CLI, Docker Buildx, and a running
+Docker daemon. Codex requires `${CODEX_HOME:-$HOME/.codex}` on the host.
+Reusing a Claude subscription requires a completed Claude Code login on a
+Linux or WSL host. Kimi Code needs no host setup: its data directory is created
+when missing, and you can log in from inside the container.
 
 ```bash
-# Build the shared image once, from this source checkout
-docker build -t docker-agent:local .
-
-# Install docker-agent and one launcher per supported agent
-sudo ./install.sh
+# Check dependencies, build docker-agent:local, and install every launcher
+./install.sh
 
 # Interactively create a custom-endpoint profile
 docker-claude --create-profile
@@ -37,8 +34,19 @@ docker-agent cursor-agent
 
 `docker-codex` is equivalent to `docker-agent codex`, `docker-claude` to
 `docker-agent claude`, `docker-kimi` to `docker-agent kimi`, and
-`docker-cursor-agent` to `docker-agent cursor-agent`. Without `sudo`, run
-`./install.sh --prefix "$HOME/.local"` to install under `$HOME/.local/bin`.
+`docker-cursor-agent` to `docker-agent cursor-agent`. Do not run the entire
+installer with `sudo`: it builds the image as the current user and requests
+administrator access only when installing launchers into `/usr/local/bin`.
+Use `./install.sh --prefix "$HOME/.local"` to install under `$HOME/.local/bin`
+without administrator access. Development and automation workflows can use
+`--skip-build` to install only the launchers.
+
+Docker Desktop normally includes Buildx. If the Docker CLI was installed
+separately with Homebrew and the installer reports that Buildx is missing, run
+`brew install docker-buildx`. If `docker buildx version` still cannot find the
+plugin, add the actual path represented by
+`$(brew --prefix)/lib/docker/cli-plugins` to `cliPluginsExtraDirs` in
+`~/.docker/config.json`.
 
 Cursor Agent needs an API key file prepared first; see
 [Cursor Agent integration](docs/en/cursor-agent.md).

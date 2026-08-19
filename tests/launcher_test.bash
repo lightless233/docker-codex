@@ -284,6 +284,44 @@ test_installed_launcher_rejects_build_without_source_checkout() {
   assert_no_line "<build>" "$TEST_DOCKER_LOG"
 }
 
+test_source_launcher_checks_buildx_before_building() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+
+  run_launcher "$repo" "$ROOT" --build -- --version
+
+  assert_ordered_lines "$TEST_DOCKER_LOG" \
+    '<buildx>' \
+    '<version>' \
+    '<build>' \
+    '<--tag>' \
+    '<docker-agent:local>' \
+    "<$ROOT>"
+}
+
+test_source_launcher_reports_missing_buildx() {
+  local TEST_TMP
+  TEST_TMP=$(new_tmp)
+  local repo="$TEST_TMP/repo"
+  local errors="$TEST_TMP/errors"
+  make_repo "$repo"
+  prepare_fake_runtime "$TEST_TMP"
+
+  if DOCKER_AGENT_TEST_BUILDX_STATUS=1 \
+      run_launcher "$repo" "$ROOT" --build -- --version \
+      >"$errors" 2>&1; then
+    fail "source launcher without Buildx unexpectedly built the image"
+  fi
+
+  assert_contains "Docker Buildx is required" "$errors"
+  assert_contains "brew install docker-buildx" "$errors"
+  assert_line '<buildx>' "$TEST_DOCKER_LOG"
+  assert_no_line '<build>' "$TEST_DOCKER_LOG"
+}
+
 test_linked_worktree_mounts_external_git_metadata_and_readonly_bind() {
   local TEST_TMP
   TEST_TMP=$(new_tmp)
@@ -317,7 +355,7 @@ test_submodule_mounts_external_git_metadata() {
   git -c protocol.file.allow=always -C "$parent" submodule add -q "$child" "modules/child"
   git -C "$parent" commit -qam submodule
   submodule="$parent/modules/child"
-  git_dir=$(git -C "$submodule" rev-parse --path-format=absolute --git-dir)
+  git_dir=$(git_metadata_dir "$submodule" --git-dir)
   git_dir=$(cd "$git_dir" && pwd -P)
   prepare_fake_runtime "$TEST_TMP"
 
@@ -689,7 +727,7 @@ test_pat_value_is_stored_under_data_home_and_never_passed_as_argument() {
   [[ -f $stored ]] || fail "--pat token was not stored at $stored"
   [[ $(cat "$stored") == token-xyz ]] ||
     fail "stored --pat token has unexpected content: $(cat "$stored")"
-  perms=$(stat -c %a "$stored")
+  perms=$(file_mode "$stored")
   [[ $perms == 600 ]] ||
     fail "stored --pat token has mode $perms instead of 600"
   assert_line "<type=bind,source=$stored,target=/codex-credentials/pat,readonly>" "$TEST_DOCKER_LOG"
@@ -892,6 +930,8 @@ test_same_named_non_git_directories_are_isolated
 test_non_git_directory_rejects_isolated_worktree_mode
 test_installed_launcher_runs_without_source_checkout
 test_installed_launcher_rejects_build_without_source_checkout
+test_source_launcher_checks_buildx_before_building
+test_source_launcher_reports_missing_buildx
 test_linked_worktree_mounts_external_git_metadata_and_readonly_bind
 test_submodule_mounts_external_git_metadata
 test_darwin_does_not_add_linux_host_gateway

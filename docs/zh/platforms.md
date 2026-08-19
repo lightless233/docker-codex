@@ -49,7 +49,7 @@ Debian 占用。宿主机 Keychain 中的 Codex 或 Claude 凭据仍然无法进
 需要 Linux amd64 环境，可以手动选择平台：
 
 ```bash
-DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -t docker-agent:local .
+DOCKER_DEFAULT_PLATFORM=linux/amd64 ./install.sh
 ```
 
 通过模拟运行 amd64 镜像时，构建和运行速度都会更慢。

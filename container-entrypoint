@@ -68,7 +68,9 @@ load_claude_profile() {
       printf 'docker-agent: invalid Claude profile key: %s\n' "$key" >&2
       return 1
     }
-    if array_contains "$key" "${seen_keys[@]}"; then
+    # Keep this compatible with Bash 3.2, where an empty array is considered
+    # unset when nounset is enabled.
+    if array_contains "$key" ${seen_keys[@]+"${seen_keys[@]}"}; then
       printf 'docker-agent: duplicate Claude profile key: %s\n' "$key" >&2
       return 1
     fi
@@ -120,7 +122,7 @@ load_claude_profile() {
     }
   fi
 
-  for assignment in "${assignments[@]}"; do
+  for assignment in ${assignments[@]+"${assignments[@]}"}; do
     key=${assignment%%=*}
     if [[ ,$override_keys, == *,$key,* ]]; then
       continue

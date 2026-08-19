@@ -645,8 +645,13 @@ test_codex_still_sends_the_clipboard_script_the_shim_emulates() {
       set -euo pipefail
       shopt -s nullglob
       binaries=(/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-*/vendor/*/bin/codex)
-      if (( ${#binaries[@]} != 1 )); then
-        printf "%s\n" "expected one codex native binary, found ${#binaries[@]}" >&2
+      if [[ ${binaries[0]+set} == set ]]; then
+        binary_count=${#binaries[@]}
+      else
+        binary_count=0
+      fi
+      if (( binary_count != 1 )); then
+        printf "%s\n" "expected one codex native binary, found $binary_count" >&2
         exit 1
       fi
       # Codex spawns powershell.exe first among its candidate names; the shim

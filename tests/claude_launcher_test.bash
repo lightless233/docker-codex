@@ -57,14 +57,26 @@ run_profile_creator() {
     fail "script is required for profile creator PTY tests"
   mkfifo "$fifo"
   exec 7<>"$fifo"
+  # macOS script(1) takes the command after its output file and uses -F for
+  # immediate flushing; util-linux script takes it through -c and uses -f.
   # shellcheck disable=SC2016 # Variables expand in script's child shell.
-  DOCKER_AGENT_CONFIG_HOME="$TEST_AGENT_CONFIG_HOME" \
-    DOCKER_AGENT_DOCKER_BIN="$directory/does-not-exist-docker" \
-    DOCKER_AGENT_TEST_LAUNCHER="$ROOT/docker-claude" \
-    DOCKER_AGENT_TEST_DONE_FILE="$done_file" \
-    script -qfec \
-      '"$DOCKER_AGENT_TEST_LAUNCHER" --create-profile; result=$?; printf "%s\n" "$result" >"$DOCKER_AGENT_TEST_DONE_FILE"; exit "$result"' \
-      /dev/null <&7 >"$output" 2>&1 &
+  if [[ $(uname -s) == Darwin ]]; then
+    DOCKER_AGENT_CONFIG_HOME="$TEST_AGENT_CONFIG_HOME" \
+      DOCKER_AGENT_DOCKER_BIN="$directory/does-not-exist-docker" \
+      DOCKER_AGENT_TEST_LAUNCHER="$ROOT/docker-claude" \
+      DOCKER_AGENT_TEST_DONE_FILE="$done_file" \
+      script -qeF /dev/null /bin/bash -c \
+        '"$DOCKER_AGENT_TEST_LAUNCHER" --create-profile; result=$?; printf "%s\n" "$result" >"$DOCKER_AGENT_TEST_DONE_FILE"; exit "$result"' \
+        <&7 >"$output" 2>&1 &
+  else
+    DOCKER_AGENT_CONFIG_HOME="$TEST_AGENT_CONFIG_HOME" \
+      DOCKER_AGENT_DOCKER_BIN="$directory/does-not-exist-docker" \
+      DOCKER_AGENT_TEST_LAUNCHER="$ROOT/docker-claude" \
+      DOCKER_AGENT_TEST_DONE_FILE="$done_file" \
+      script -qfec \
+        '"$DOCKER_AGENT_TEST_LAUNCHER" --create-profile; result=$?; printf "%s\n" "$result" >"$DOCKER_AGENT_TEST_DONE_FILE"; exit "$result"' \
+        /dev/null <&7 >"$output" 2>&1 &
+  fi
   pid=$!
 
   exec 9<"$input"
@@ -666,9 +678,9 @@ test_subscription_mounts_only_host_credential_file_readwrite() {
   assert_not_contains "source=$claude_home,target=/claude-state" \
     "$TEST_DOCKER_LOG"
   assert_line "<CLAUDE_CONFIG_DIR=/claude-state>" "$TEST_DOCKER_LOG"
-  [[ $(stat -c %a "$state") == 700 ]] ||
+  [[ $(test_file_mode "$state") == 700 ]] ||
     fail "Claude state directory does not have mode 700"
-  [[ $(stat -c %a "$state/.docker-agent-identity") == 600 ]] ||
+  [[ $(test_file_mode "$state/.docker-agent-identity") == 600 ]] ||
     fail "Claude state identity does not have mode 600"
 }
 

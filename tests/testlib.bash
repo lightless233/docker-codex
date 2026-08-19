@@ -24,6 +24,23 @@ file_mode() {
   fi
 }
 
+sha256_stdin() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum
+  else
+    shasum -a 256
+  fi
+}
+
+git_metadata_dir() {
+  local checkout=$1 option=$2 path
+  path=$(git -C "$checkout" rev-parse "$option")
+  if [[ $path != /* ]]; then
+    path="$checkout/$path"
+  fi
+  (cd "$path" && pwd -P)
+}
+
 assert_line() {
   local expected=$1 file=$2
   grep -Fqx -- "$expected" "$file" ||
@@ -53,10 +70,10 @@ assert_not_contains() {
 contains_contiguous_lines() {
   local file=$1
   shift
+  (($# > 0)) || return 0
   local expected=("$@")
   local matched=0 line
 
-  ((${#expected[@]})) || return 0
   while IFS= read -r line; do
     if [[ $line == "${expected[$matched]}" ]]; then
       matched=$((matched + 1))
@@ -128,6 +145,10 @@ log=${DOCKER_AGENT_TEST_DOCKER_LOG:-${DOCKER_CODEX_TEST_DOCKER_LOG:?}}
 printf 'CALL\n' >>"$log"
 printf '<%s>\n' "$@" >>"$log"
 case ${1:-} in
+  buildx)
+    [[ ${2:-} == version ]] || exit 2
+    exit "${DOCKER_AGENT_TEST_BUILDX_STATUS:-0}"
+    ;;
   network)
     network_state="${log}.networks"
     case ${2:-} in
@@ -142,7 +163,8 @@ case ${1:-} in
     esac
     exit 0
     ;;
-  info|image|build|run) exit 0 ;;
+  info) exit "${DOCKER_AGENT_TEST_INFO_STATUS:-0}" ;;
+  image|build|run) exit 0 ;;
 esac
 exit 2
 EOF

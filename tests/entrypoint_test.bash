@@ -283,7 +283,7 @@ test_cargo_target_dir_is_scoped_per_worktree() {
       run_entrypoint "$fake_bin" "$log" custom-command
   )
   root=$(git -C "$repo" rev-parse --show-toplevel)
-  expected="/codex-cache/cargo-targets/$(basename "$root")-$(printf '%s' "$root" | sha256sum | cut -c1-16)"
+  expected="/codex-cache/cargo-targets/$(basename "$root")-$(printf '%s' "$root" | sha256_stdin | cut -c1-16)"
   assert_line "<ENV_CARGO_TARGET_DIR:$expected>" "$log"
   assert_line "<ENV_CARGO_HOME:/codex-cache/cargo-home>" "$log"
 
@@ -295,7 +295,7 @@ test_cargo_target_dir_is_scoped_per_worktree() {
       run_entrypoint "$fake_bin" "$log" custom-command
   )
   root=$(cd "$plain" && pwd -P)
-  expected="/codex-cache/cargo-targets/$(basename "$root")-$(printf '%s' "$root" | sha256sum | cut -c1-16)"
+  expected="/codex-cache/cargo-targets/$(basename "$root")-$(printf '%s' "$root" | sha256_stdin | cut -c1-16)"
   assert_line "<ENV_CARGO_TARGET_DIR:$expected>" "$log"
 }
 

@@ -8,6 +8,20 @@ die() {
   exit 1
 }
 
+die_missing_buildx() {
+  # shellcheck disable=SC2016 # Show the command literally; do not run Homebrew.
+  printf '%s\n' \
+    "$PROGRAM_NAME: Docker Buildx is required to build $IMAGE." \
+    '' \
+    'For a Docker CLI installed with Homebrew, install the plugin with:' \
+    '  brew install docker-buildx' \
+    '' \
+    'If Docker still cannot find Buildx, add this directory to' \
+    '"cliPluginsExtraDirs" in ~/.docker/config.json:' \
+    '  $(brew --prefix)/lib/docker/cli-plugins' >&2
+  exit 1
+}
+
 usage_agent() {
   cat <<'EOF'
 Usage: docker-agent {codex|claude|kimi|cursor-agent} [options] [--] [agent args...]
@@ -210,6 +224,15 @@ path_is_within() {
   [[ $child == "$parent" || $child == "$parent/"* ]]
 }
 
+git_metadata_dir() {
+  local checkout=$1 option=$2 path
+  path=$(git -C "$checkout" rev-parse "$option")
+  if [[ $path != /* ]]; then
+    path="$checkout/$path"
+  fi
+  (cd "$path" && pwd -P)
+}
+
 file_uid() {
   if stat -c %u "$1" >/dev/null 2>&1; then
     stat -c %u "$1"
@@ -343,7 +366,7 @@ validate_isolated_name() {
 create_isolated_worktree() {
   local name=$1 current_branch repo_id target branch
   validate_isolated_name "$name"
-  current_branch=$(git branch --show-current)
+  current_branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
   [[ -n $current_branch ]] ||
     die "--isolated requires the current checkout to be on a branch"
 
@@ -377,12 +400,16 @@ select_claude_connection() {
 menu_select() {
   local prompt=$1
   shift
+  (($# > 0)) || return 1
   local options=("$@")
   local index=0 key escape_sequence i
   local input_fd=${DOCKER_AGENT_MENU_INPUT_FD:-0}
   local output_fd=${DOCKER_AGENT_MENU_OUTPUT_FD:-1}
+  local escape_timeout=0.1
 
-  ((${#options[@]} > 0)) || return 1
+  # Bash 3.2 accepts only whole seconds for `read -t`.
+  ((BASH_VERSINFO[0] >= 4)) || escape_timeout=1
+
   while :; do
     printf '\033[2J\033[H%s\n\n' "$prompt" >&"$output_fd"
     for ((i = 0; i < ${#options[@]}; i++)); do
@@ -413,7 +440,8 @@ menu_select() {
         ;;
       $'\033')
         escape_sequence=
-        if ! IFS= read -rsn2 -t 0.1 escape_sequence <&"$input_fd"; then
+        if ! IFS= read -rsn2 -t "$escape_timeout" escape_sequence \
+          <&"$input_fd"; then
           return 130
         fi
         case $escape_sequence in
@@ -501,7 +529,7 @@ choose_custom_profile_menu() {
     )
   fi
 
-  if ((${#profile_names[@]} == 0)); then
+  if [[ ${profile_names[0]+set} != set ]]; then
     die "no custom Claude profiles found in: $profile_dir
 Create one with:
   install -d -m 700 \"$profile_dir\"
@@ -536,7 +564,8 @@ validate_claude_profile() {
     value=${line#*=}
     [[ $key =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] ||
       die "invalid Claude profile key: $key"
-    array_contains "$key" "${seen_keys[@]}" &&
+    # Bash 3.2 treats a zero-element array as unset under `set -u`.
+    array_contains "$key" ${seen_keys[@]+"${seen_keys[@]}"} &&
       die "duplicate Claude profile key: $key"
     seen_keys+=("$key")
     normalize_claude_profile_value "$value" ||
@@ -921,11 +950,12 @@ configure_kimi_runtime() {
 }
 
 codex_final_args() {
-  FINAL_ARGS=(codex --yolo --disable apps "${AGENT_ARGS[@]}")
+  FINAL_ARGS=(codex --yolo --disable apps \
+    ${AGENT_ARGS[@]+"${AGENT_ARGS[@]}"})
 }
 
 claude_final_args() {
-  FINAL_ARGS=(claude "${AGENT_ARGS[@]}")
+  FINAL_ARGS=(claude ${AGENT_ARGS[@]+"${AGENT_ARGS[@]}"})
 }
 
 # Kimi Code rejects --yolo together with --prompt, --auto, or --plan, and its
@@ -933,7 +963,7 @@ claude_final_args() {
 # when the caller did not pick a mode itself.
 kimi_selects_own_mode() {
   local arg
-  for arg in "${AGENT_ARGS[@]}"; do
+  for arg in ${AGENT_ARGS[@]+"${AGENT_ARGS[@]}"}; do
     case $arg in
       -p|--prompt|--prompt=*|-y|--yolo|--yes|--auto-approve|--auto|--plan)
         return 0
@@ -945,9 +975,9 @@ kimi_selects_own_mode() {
 
 kimi_final_args() {
   if kimi_selects_own_mode; then
-    FINAL_ARGS=(kimi "${AGENT_ARGS[@]}")
+    FINAL_ARGS=(kimi ${AGENT_ARGS[@]+"${AGENT_ARGS[@]}"})
   else
-    FINAL_ARGS=(kimi --yolo "${AGENT_ARGS[@]}")
+    FINAL_ARGS=(kimi --yolo ${AGENT_ARGS[@]+"${AGENT_ARGS[@]}"})
   fi
 }
 
@@ -1001,7 +1031,7 @@ configure_cursor_agent_runtime() {
 
 cursor_agent_selects_own_mode() {
   local arg
-  for arg in "${AGENT_ARGS[@]}"; do
+  for arg in ${AGENT_ARGS[@]+"${AGENT_ARGS[@]}"}; do
     case $arg in
       -f|--force|--yolo|--auto-review)
         return 0
@@ -1017,7 +1047,7 @@ cursor_agent_selects_own_mode() {
 # the flag through, but says so first.
 warn_cursor_agent_worktree() {
   local arg
-  for arg in "${AGENT_ARGS[@]}"; do
+  for arg in ${AGENT_ARGS[@]+"${AGENT_ARGS[@]}"}; do
     case $arg in
       -w|--worktree|--worktree=*)
         cat >&2 <<'EOF'
@@ -1045,9 +1075,11 @@ cursor_agent_final_args() {
   # --disable-auto-update is a hidden flag; without it the pinned version in the
   # image can replace itself at runtime.
   if cursor_agent_selects_own_mode; then
-    FINAL_ARGS=(cursor-agent --disable-auto-update "${AGENT_ARGS[@]}")
+    FINAL_ARGS=(cursor-agent --disable-auto-update \
+      ${AGENT_ARGS[@]+"${AGENT_ARGS[@]}"})
   else
-    FINAL_ARGS=(cursor-agent --disable-auto-update --force "${AGENT_ARGS[@]}")
+    FINAL_ARGS=(cursor-agent --disable-auto-update --force \
+      ${AGENT_ARGS[@]+"${AGENT_ARGS[@]}"})
   fi
 }
 
@@ -1119,7 +1151,7 @@ while (($#)); do
     --network)
       (($# >= 2)) || die "--network requires a value"
       [[ -n $2 ]] || die "--network requires a non-empty value"
-      if ! array_contains "$2" "${NETWORKS[@]}"; then
+      if ! array_contains "$2" ${NETWORKS[@]+"${NETWORKS[@]}"}; then
         NETWORKS+=("$2")
       fi
       shift 2
@@ -1191,7 +1223,7 @@ if [[ -n $PAT_VALUE && -n $PAT_PATH ]]; then
   die "--pat and --pat-path are mutually exclusive"
 fi
 
-for network in "${NETWORKS[@]}"; do
+for network in ${NETWORKS[@]+"${NETWORKS[@]}"}; do
   case $network in
     host|none)
       ((DEFAULT_NETWORK_ENABLED == 0)) ||
@@ -1227,10 +1259,8 @@ fi
 run_agent_hook "resolve_${AGENT_SLUG}_launch"
 
 if ((HAS_GIT)); then
-  COMMON_DIR=$(git rev-parse --path-format=absolute --git-common-dir)
-  COMMON_DIR=$(cd "$COMMON_DIR" && pwd -P)
-  GIT_DIR=$(git rev-parse --path-format=absolute --git-dir)
-  GIT_DIR=$(cd "$GIT_DIR" && pwd -P)
+  COMMON_DIR=$(git_metadata_dir "$CHECKOUT_ROOT" --git-common-dir)
+  GIT_DIR=$(git_metadata_dir "$CHECKOUT_ROOT" --git-dir)
 else
   COMMON_DIR="$CHECKOUT_ROOT/.git"
   GIT_DIR=
@@ -1238,10 +1268,8 @@ fi
 
 if [[ -n $ISOLATED ]]; then
   create_isolated_worktree "$ISOLATED"
-  COMMON_DIR=$(git -C "$CHECKOUT_ROOT" rev-parse --path-format=absolute --git-common-dir)
-  COMMON_DIR=$(cd "$COMMON_DIR" && pwd -P)
-  GIT_DIR=$(git -C "$CHECKOUT_ROOT" rev-parse --path-format=absolute --git-dir)
-  GIT_DIR=$(cd "$GIT_DIR" && pwd -P)
+  COMMON_DIR=$(git_metadata_dir "$CHECKOUT_ROOT" --git-common-dir)
+  GIT_DIR=$(git_metadata_dir "$CHECKOUT_ROOT" --git-dir)
 fi
 run_agent_hook "prepare_${AGENT_SLUG}_state_hook"
 REPO_ID=$(repo_id_for "$COMMON_DIR")
@@ -1250,7 +1278,7 @@ DOCKER_ARGS=(run --rm)
 if ((DEFAULT_NETWORK_ENABLED)); then
   DOCKER_ARGS+=(--network "$DEFAULT_NETWORK")
 fi
-for network in "${NETWORKS[@]}"; do
+for network in ${NETWORKS[@]+"${NETWORKS[@]}"}; do
   if ((DEFAULT_NETWORK_ENABLED)) && [[ $network == "$DEFAULT_NETWORK" ]]; then
     continue
   fi
@@ -1276,10 +1304,10 @@ if ((HOST_DOCKER)); then
   DOCKER_ARGS+=(--env "DOCKER_HOST=unix:///var/run/docker.sock")
   DOCKER_ARGS+=(--mount "type=bind,source=$DOCKER_SOCKET,target=/var/run/docker.sock")
 fi
-for env_spec in "${ENV_SPECS[@]}"; do
+for env_spec in ${ENV_SPECS[@]+"${ENV_SPECS[@]}"}; do
   DOCKER_ARGS+=(--env "$env_spec")
 done
-if ((${#ENV_OVERRIDE_KEYS[@]})); then
+if [[ ${ENV_OVERRIDE_KEYS[0]+set} == set ]]; then
   env_override_key_list=
   for env_name in "${ENV_OVERRIDE_KEYS[@]}"; do
     if [[ -n $env_override_key_list ]]; then
@@ -1339,7 +1367,7 @@ if ((HAS_GIT)); then
     append_same_path_mount "$GIT_DIR"
   fi
 fi
-for bind_spec in "${BIND_SPECS[@]}"; do
+for bind_spec in ${BIND_SPECS[@]+"${BIND_SPECS[@]}"}; do
   bind_mode=rw
   bind_path=$bind_spec
   if [[ $bind_spec == *:ro ]]; then
@@ -1420,6 +1448,7 @@ if ((BUILD)); then
   SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
   [[ -f $SCRIPT_DIR/Dockerfile && -f $SCRIPT_DIR/container-entrypoint ]] ||
     die "--build requires the docker-agent source checkout; run the repository copy"
+  "$DOCKER_BIN" buildx version >/dev/null 2>&1 || die_missing_buildx
   "$DOCKER_BIN" build --tag "$IMAGE" "$SCRIPT_DIR"
 else
   "$DOCKER_BIN" image inspect "$IMAGE" >/dev/null 2>&1 ||
