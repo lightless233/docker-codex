@@ -11,7 +11,7 @@
 docker build \
   --build-arg NODE_VERSION=24.19.0 \
   --build-arg GO_VERSION=1.26.6 \
-  --build-arg CODEX_VERSION=0.148.0 \
+  --build-arg CODEX_VERSION=0.149.0 \
   --build-arg CLAUDE_CODE_VERSION=2.1.229 \
   --build-arg KIMI_CODE_VERSION=0.36.0 \
   --build-arg CURSOR_AGENT_VERSION=2026.08.11-e8db854 \

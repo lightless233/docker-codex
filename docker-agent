@@ -1649,7 +1649,7 @@ start_macos_clipboard_bridge() {
   DOCKER_ARGS+=(--mount "type=bind,source=$MACOS_CLIPBOARD_DIR,target=/run/docker-agent/macos-clipboard,readonly")
   DOCKER_ARGS+=(--env "DOCKER_AGENT_CLIPBOARD_BACKEND=macos")
   if [[ $AGENT == codex ]]; then
-    # Codex 0.148.0 only enters its PowerShell clipboard fallback after a WSL
+    # Codex 0.149.0 only enters its PowerShell clipboard fallback after a WSL
     # check. WSL_INTEROP is the narrowest marker that reaches that check; the
     # shim above handles the call without exposing a Windows interop socket.
     DOCKER_ARGS+=(--env "WSL_INTEROP=/run/docker-agent/macos-clipboard")

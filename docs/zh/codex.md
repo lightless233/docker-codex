@@ -114,7 +114,7 @@ model_auto_compact_token_limit = 900000
 不要盲目复制模型上下文数值；它们必须与中转站实际暴露的模型一致，否则可能
 导致过晚压缩或请求被拒绝。
 
-当前镜像的 Codex 0.148.0 已移除 `responses_websockets_v2` feature flag，
+当前镜像的 Codex 0.149.0 已移除 `responses_websockets_v2` feature flag，
 不要再添加：
 
 ```toml
@@ -130,7 +130,7 @@ supports_websockets = true
 
 否则保留创建器的默认配置，Codex 使用 Responses SSE。当前官方 schema 也没有
 截图中的顶层 `disable_response_storage` 或 `network_access = "enabled"`；不要把
-它们放入需要通过 `--strict-config` 校验的 0.148.0 profile。
+它们放入需要通过 `--strict-config` 校验的 0.149.0 profile。
 
 `features.codex_hooks` 也已弃用，应改为 `features.hooks`。启动器会对
 普通托管 profile 中的该旧键做一次保持布尔值的原子迁移。如果手写

@@ -281,7 +281,7 @@ test_agent_notes_are_readable_by_runtime_user() {
 test_claude_code_and_locale_are_installed() {
   "$DOCKER_BIN" run --rm --entrypoint bash "$IMAGE" -lc '
     set -euo pipefail
-    codex --version | grep -Fx "codex-cli 0.148.0" >/dev/null
+    codex --version | grep -Fx "codex-cli 0.149.0" >/dev/null
     claude --version | grep -F "2.1.229" >/dev/null
     kimi --version | grep -Fx "0.36.0" >/dev/null
     cursor-agent --version | grep -Fx "2026.08.11-e8db854" >/dev/null

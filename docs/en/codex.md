@@ -125,7 +125,7 @@ model_auto_compact_token_limit = 900000
 Do not copy context limits blindly. They must match the model exposed by the
 relay or compaction may happen too late and requests may be rejected.
 
-Codex 0.148.0 in the current image has removed the
+Codex 0.149.0 in the current image has removed the
 `responses_websockets_v2` feature flag. Do not add:
 
 ```toml
@@ -143,7 +143,7 @@ supports_websockets = true
 Otherwise keep the creator's default and use Responses SSE. The current
 official schema also does not list the screenshot's top-level
 `disable_response_storage` or `network_access = "enabled"`; omit them from a
-0.148.0 profile that must pass `--strict-config`.
+0.149.0 profile that must pass `--strict-config`.
 
 `features.codex_hooks` is also deprecated; use `features.hooks`. The launcher
 atomically migrates that old key in ordinary managed profiles while preserving

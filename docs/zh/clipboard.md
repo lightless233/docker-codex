@@ -19,7 +19,7 @@ macOS Docker Desktop 无法把宿主 `NSPasteboard` 直接挂进 Linux 容器。
 目录只读挂载进容器。文本剪贴板不会写入。当前剪贴板不含图片时，旧快照会
 被删除，避免误贴上一张图；容器退出后监视器与整个会话目录一并清理。
 
-固定的 Codex 0.148.0 只会在判断为 WSL 后调用 PowerShell 图片 fallback，
+固定的 Codex 0.149.0 只会在判断为 WSL 后调用 PowerShell 图片 fallback，
 所以 macOS 的 Codex 容器仅在宿主监视器成功启动时注入一个最小
 `WSL_INTEROP` 标记。`powershell.exe` shim 随后从只读挂载复制当前快照到
 容器自身、由运行 UID 持有的输出目录，并返回 Codex 预期的 Windows 形状
@@ -36,7 +36,7 @@ WSLg 可能把 PNG 截图以 `image/bmp` 暴露给 Wayland 客户端。Claude Co
 
 WSL 宿主上的 Codex 实际是通过 Windows PowerShell 回退读取剪贴板图像
 的，而 Docker Desktop 容器无法使用 WSL interop 触达 Windows 会话。
-镜像因此内置了一个 `powershell.exe` shim：它模拟 Codex 0.148.0 期望
+镜像因此内置了一个 `powershell.exe` shim：它模拟 Codex 0.149.0 期望
 的调用契约（包括 Windows 路径到 `/mnt/c` 的映射），通过转发进来的
 WSLg Wayland 剪贴板取图并转成 PNG。shim 只处理剪贴板图像读取，其他
 `powershell.exe` 调用一律失败。它与 Codex 内部实现耦合，属于临时

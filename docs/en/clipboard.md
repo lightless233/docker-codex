@@ -27,7 +27,7 @@ clipboard has no image, the previous snapshot is removed so it cannot be
 pasted accidentally; the monitor and session directory are cleaned up when
 the container exits.
 
-Pinned Codex 0.148.0 calls its PowerShell image fallback only after deciding it
+Pinned Codex 0.149.0 calls its PowerShell image fallback only after deciding it
 is running under WSL. The macOS Codex container therefore receives a minimal
 `WSL_INTEROP` marker only after the host monitor starts successfully. The
 `powershell.exe` shim copies the current mounted snapshot into a container-local
@@ -48,7 +48,7 @@ the issue at the clipboard-format boundary for both Claude and Codex.
 On a WSL host Codex actually reads clipboard images through a Windows
 PowerShell fallback, and WSL interop cannot reach the Windows session from
 a Docker Desktop container. The image therefore ships a `powershell.exe`
-shim that emulates the exact call contract Codex 0.148.0 expects (including
+shim that emulates the exact call contract Codex 0.149.0 expects (including
 the Windows-path-to-`/mnt/c` mapping), fetching the image through the
 forwarded WSLg Wayland clipboard and converting it to PNG. The shim only
 handles clipboard image reads; every other `powershell.exe` call fails. It
